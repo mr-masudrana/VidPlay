@@ -116,7 +116,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         expanded = true
     }
 
-    fun setQuality(h: Int) {
+    fun selectQuality(h: Int) {
         val info = current ?: return
         quality = h
         val pos = player.currentPosition

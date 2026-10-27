@@ -132,7 +132,7 @@ private fun PlayerBox(
                                 text = {
                                     Text((if (h == 0) "Auto" else "${h}p") + if (vm.quality == h) "  ✓" else "")
                                 },
-                                onClick = { vm.setQuality(h); qMenu = false }
+                                onClick = { vm.selectQuality(h); qMenu = false }
                             )
                         }
                     }
