@@ -1,18 +1,18 @@
 package com.example.vidplay
 
 import android.app.DownloadManager
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
@@ -36,9 +36,7 @@ fun SubsTab(vm: MainViewModel) {
     }
     LazyColumn {
         item {
-            LazyRow(
-                contentPadding = PaddingValues(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
+            LazyRow(contentPadding = PaddingValues(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(subs) { s ->
                     Column(
                         Modifier.width(72.dp).clickable { vm.openChannel(s.url) },
@@ -58,9 +56,51 @@ fun SubsTab(vm: MainViewModel) {
     }
 }
 
-// ---------- ডাউনলোড ট্যাব ----------
+// ---------- লাইব্রেরি: ইতিহাস | ডাউনলোড ----------
 @Composable
 fun LibraryTab(vm: MainViewModel) {
+    var sub by remember { mutableStateOf(0) }
+    val on = MaterialTheme.colorScheme.onBackground
+    Column {
+        Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("ইতিহাস", "ডাউনলোড").forEachIndexed { i, t ->
+                val sel = sub == i
+                Text(
+                    t, color = if (sel) Bg else on, fontSize = 14.sp,
+                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(if (sel) on else Chip)
+                        .clickable { sub = i }.padding(horizontal = 14.dp, vertical = 7.dp)
+                )
+            }
+        }
+        if (sub == 0) HistoryList(vm) else DownloadList(vm)
+    }
+}
+
+@Composable
+private fun HistoryList(vm: MainViewModel) {
+    val list by vm.history.collectAsState()
+    if (list.isEmpty()) {
+        Box(Modifier.fillMaxSize(), Alignment.Center) { Text("ইতিহাস খালি", color = Sub) }
+        return
+    }
+    LazyColumn {
+        items(list, key = { it.url }) { h ->
+            Row(
+                Modifier.fillMaxWidth().clickable { vm.play(h.url) }.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                HistoryThumb(h, Modifier.width(128.dp).aspectRatio(16f / 9f))
+                Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                    Text(h.title, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(h.channel, color = Sub, fontSize = 12.sp, maxLines = 1, modifier = Modifier.padding(top = 4.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DownloadList(vm: MainViewModel) {
     val list by vm.downloads.collectAsState()
     if (list.isEmpty()) {
         Box(Modifier.fillMaxSize(), Alignment.Center) { Text("কোনো ডাউনলোড নেই", color = Sub) }

@@ -62,8 +62,8 @@ fun ChannelScreen(vm: MainViewModel) {
                     onClick = { vm.toggleSub(ch.url, ch.name, ch.avatar) },
                     modifier = Modifier.fillMaxWidth().padding(16.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = if (subbed) Color(0xFF272727) else Color.White,
-                        contentColor = if (subbed) Color.White else Color.Black
+                        containerColor = if (subbed) Chip else MaterialTheme.colorScheme.onBackground,
+                        contentColor = if (subbed) MaterialTheme.colorScheme.onBackground else Bg
                     )
                 ) { Text(if (subbed) "সাবস্ক্রাইবড" else "সাবস্ক্রাইব") }
                 Text("ভিডিও", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(16.dp, 0.dp, 16.dp, 8.dp))

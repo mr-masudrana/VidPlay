@@ -28,7 +28,7 @@ class MainActivity : ComponentActivity() {
         MediaController.Builder(this, token).buildAsync()
             .also { f -> f.addListener({ controller = f.get() }, mainExecutor) }
 
-        setContent { YtTheme { YtApp(vm) } }
+        setContent { YtTheme(vm.themeIndex) { YtApp(vm) } }
     }
 
     // হোম বাটন চাপলে (ভিডিও চলাকালীন) PiP

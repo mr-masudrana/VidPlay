@@ -124,10 +124,17 @@ private fun PlayerBox(
                     Icon(Icons.Filled.KeyboardArrowDown, null, tint = Color.White)
                 }
                 Spacer(Modifier.weight(1f))
-                if (vm.current != null) Box {
+                Box {
                     IconButton(onClick = { qMenu = true }) { Icon(Icons.Filled.Settings, null, tint = Color.White) }
                     DropdownMenu(qMenu, { qMenu = false }) {
-                        (listOf(0) + vm.heights).forEach { h ->
+                        listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f).forEach { sp ->
+                            DropdownMenuItem(
+                                text = { Text("গতি ${sp}x" + if (vm.speed == sp) "  ✓" else "") },
+                                onClick = { vm.chooseSpeed(sp); qMenu = false }
+                            )
+                        }
+                        HorizontalDivider()
+                        (if (vm.current != null) listOf(0) + vm.heights else emptyList()).forEach { h ->
                             DropdownMenuItem(
                                 text = {
                                     Text((if (h == 0) "Auto" else "${h}p") + if (vm.quality == h) "  ✓" else "")
@@ -180,6 +187,10 @@ private fun Details(vm: MainViewModel) {
                             info.textualUploadDate ?: "").filter { it.isNotBlank() }.joinToString(" • "),
                         color = Sub, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)
                     )
+                    if (vm.likes != null) Text(
+                        "👍 ${fmtCount(vm.likes ?: 0)}" + (vm.dislikes?.let { "   👎 ${fmtCount(it)}" } ?: ""),
+                        fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp)
+                    )
                     if (expandedDesc) Text(
                         info.description?.content ?: "", color = Sub, fontSize = 13.sp,
                         modifier = Modifier.padding(top = 8.dp)
@@ -210,8 +221,8 @@ private fun Details(vm: MainViewModel) {
                     Button(
                         onClick = { vm.toggleSub(chUrl, info.uploaderName, avatar) },
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = if (subbed) Chip else Color.White,
-                            contentColor = if (subbed) Color.White else Color.Black
+                            containerColor = if (subbed) Chip else MaterialTheme.colorScheme.onBackground,
+                            contentColor = if (subbed) MaterialTheme.colorScheme.onBackground else Bg
                         )
                     ) { Text(if (subbed) "সাবস্ক্রাইবড" else "সাবস্ক্রাইব") }
                 }
@@ -246,7 +257,7 @@ private fun Details(vm: MainViewModel) {
             item {
                 Column(
                     Modifier.padding(horizontal = 12.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFF1A1A1A)).clickable { showComments = true }.padding(12.dp)
+                        .background(Chip).clickable { showComments = true }.padding(12.dp)
                 ) {
                     Text(
                         "মন্তব্য" + if (vm.commentsTotal > 0) "  ${vm.commentsTotal}" else "",
@@ -270,7 +281,7 @@ private fun Details(vm: MainViewModel) {
     }
 
     if (showComments) ModalBottomSheet(
-        onDismissRequest = { showComments = false }, containerColor = Color(0xFF212121)
+        onDismissRequest = { showComments = false }, containerColor = Chip
     ) {
         Text("মন্তব্য", fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.padding(16.dp, 0.dp, 16.dp, 8.dp))
         LazyColumn(Modifier.fillMaxWidth().heightIn(max = 520.dp)) {
