@@ -14,7 +14,6 @@ import org.schabi.newpipe.extractor.channel.ChannelInfo
 import org.schabi.newpipe.extractor.channel.tabs.ChannelTabInfo
 import org.schabi.newpipe.extractor.channel.tabs.ChannelTabs
 import org.schabi.newpipe.extractor.comments.CommentsInfo
-import org.schabi.newpipe.extractor.kiosk.KioskInfo
 import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
@@ -49,7 +48,13 @@ object YtRepository {
     private val yt get() = ServiceList.YouTube
 
     suspend fun trending(): List<VideoItem> = withContext(Dispatchers.IO) {
-        KioskInfo.getInfo(yt).relatedItems.filterIsInstance<StreamInfoItem>().map { it.toVideo() }
+        val list = runCatching {
+            val ex = yt.kioskList.defaultKioskExtractor
+            ex.fetchPage()
+            ex.initialPage.items.filterIsInstance<StreamInfoItem>().map { it.toVideo() }
+        }.getOrDefault(emptyList())
+        // ট্রেন্ডিং বন্ধ/খালি থাকলে সার্চ দিয়ে ফিড ভরাই
+        if (list.isNotEmpty()) list else search("trending")
     }
 
     suspend fun search(query: String): List<VideoItem> = withContext(Dispatchers.IO) {
@@ -79,7 +84,7 @@ object YtRepository {
     // ---------- মন্তব্য (প্রথম পেজ) ----------
     suspend fun comments(url: String): Pair<Int, List<CommentItem>> = withContext(Dispatchers.IO) {
         val ci = CommentsInfo.getInfo(yt, url)
-        ci.commentCount to ci.relatedItems.map {
+        0 to ci.relatedItems.map {   // মোট সংখ্যা এই ভার্সনে নেই
             CommentItem(
                 author = it.uploaderName ?: "",
                 text = it.commentText?.content ?: "",
