@@ -3,6 +3,7 @@ package com.example.vidplay
 import android.Manifest
 import android.app.PictureInPictureParams
 import android.content.ComponentName
+import android.content.Intent
 import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
@@ -29,6 +30,24 @@ class MainActivity : ComponentActivity() {
             .also { f -> f.addListener({ controller = f.get() }, mainExecutor) }
 
         setContent { YtTheme(vm.themeIndex) { YtApp(vm) } }
+        if (savedInstanceState == null) handleIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    /** YouTube লিংক (VIEW) বা শেয়ার করা টেক্সট (SEND) থেকে ভিডিও/চ্যানেল খোলা */
+    private fun handleIntent(i: Intent?) {
+        if (i == null) return
+        val url = when (i.action) {
+            Intent.ACTION_VIEW -> i.dataString
+            Intent.ACTION_SEND -> i.getStringExtra(Intent.EXTRA_TEXT)?.let { Regex("https?://\\S+").find(it)?.value }
+            else -> null
+        } ?: return
+        vm.openLink(url)
     }
 
     // হোম বাটন চাপলে (ভিডিও চলাকালীন) PiP

@@ -1,6 +1,11 @@
 package com.example.vidplay
 
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.ui.platform.LocalContext
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
@@ -39,7 +44,15 @@ fun SettingsTab(vm: MainViewModel) {
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importNewPipe(uri)
     }
+    val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) vm.exportProfile(uri)
+    }
+    val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.importProfile(uri)
+    }
     LaunchedEffect(Unit) { vm.loadInterests() }
+    val blocks by vm.blocks.collectAsState()
+    var kw by remember { mutableStateOf("") }
 
     LazyColumn(contentPadding = PaddingValues(16.dp)) {
         // থিম
@@ -69,6 +82,49 @@ fun SettingsTab(vm: MainViewModel) {
             SectionTitle("প্লেব্যাক")
             SwitchRow("SponsorBlock", "স্পন্সর, ইন্ট্রো, আউট্রো অংশ নিজে বাদ দেয়", vm.sponsorOn) { vm.toggleSponsor(it) }
             SwitchRow("Return YouTube Dislike", "ডিসলাইকের আনুমানিক সংখ্যা দেখায়", vm.rydOn) { vm.toggleRyd(it) }
+            SwitchRow("শুধু অডিও (ডিফল্ট)", "ভিডিও ছাড়া শুধু শব্দ চলবে, ডেটা বাঁচবে", vm.audioOnly) { vm.toggleAudioOnly(it) }
+            SwitchRow("নীরবতা বাদ", "কথার ফাঁকের নীরব অংশ বাদ যাবে", vm.skipSilence) { vm.toggleSkipSilence(it) }
+        }
+
+        // ডিফল্ট কোয়ালিটি
+        item {
+            SectionTitle("ডিফল্ট ভিডিও কোয়ালিটি")
+            val opts = listOf(0, 144, 240, 360, 480, 720, 1080, 1440, 2160)
+            Text("ওয়াইফাই", fontSize = 13.sp, color = Sub, modifier = Modifier.padding(bottom = 4.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(opts.size) { i ->
+                    FilterChip(
+                        selected = vm.qualityWifi == opts[i], onClick = { vm.chooseDefaultQuality(true, opts[i]) },
+                        label = { Text(if (opts[i] == 0) "Auto" else "${opts[i]}p") }
+                    )
+                }
+            }
+            Text("মোবাইল ডেটা", fontSize = 13.sp, color = Sub, modifier = Modifier.padding(top = 10.dp, bottom = 4.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(opts.size) { i ->
+                    FilterChip(
+                        selected = vm.qualityMobile == opts[i], onClick = { vm.chooseDefaultQuality(false, opts[i]) },
+                        label = { Text(if (opts[i] == 0) "Auto" else "${opts[i]}p") }
+                    )
+                }
+            }
+        }
+
+        // লিংক
+        item {
+            val ctx = LocalContext.current
+            SectionTitle("YouTube লিংক")
+            Text("youtube.com ও youtu.be লিংক VidPlay-তে খুলতে \"ডিফল্টে খুলুন\" থেকে লিংকগুলো চালু করুন। শেয়ার মেনু থেকেও পাঠানো যায়।",
+                color = Sub, fontSize = 12.sp)
+            OutlinedButton(
+                onClick = {
+                    val pkg = Uri.parse("package:${ctx.packageName}")
+                    val i = if (Build.VERSION.SDK_INT >= 31) Intent(Settings.ACTION_APP_OPEN_BY_DEFAULT_SETTINGS, pkg)
+                    else Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg)
+                    runCatching { ctx.startActivity(i) }
+                },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+            ) { Text("ডিফল্টে খুলুন সেটিংস") }
         }
 
         // রিকমেন্ডেশন ড্যাশবোর্ড
@@ -91,6 +147,57 @@ fun SettingsTab(vm: MainViewModel) {
             }
         }
 
+        // নতুন ভিডিওর নোটিফিকেশন
+        item {
+            SectionTitle("নতুন ভিডিওর নোটিফিকেশন")
+            SwitchRow("সাবস্ক্রাইব করা চ্যানেল", "ব্যাকগ্রাউন্ডে মাঝে মাঝে চেক করে নোটিফিকেশন দেয়", vm.notifyOn) { vm.toggleNotify(it) }
+            val hrs = listOf(3, 6, 12, 24)
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(hrs.size) { i ->
+                    FilterChip(
+                        selected = vm.notifyHours == hrs[i], onClick = { vm.chooseNotifyHours(hrs[i]) },
+                        label = { Text("প্রতি ${hrs[i]} ঘণ্টা") }
+                    )
+                }
+            }
+            OutlinedButton(onClick = { vm.checkNewNow() }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                Text("এখনই চেক করুন")
+            }
+        }
+
+        // DeArrow
+        item {
+            SectionTitle("DeArrow")
+            Text("ক্লিকবেইট টাইটেল ও থাম্বনেইল কমিউনিটির দেওয়া সংস্করণে বদলায়", color = Sub, fontSize = 12.sp)
+            SwitchRow("টাইটেল", "আরও সৎ টাইটেল দেখায়", DeArrow.titles) { vm.toggleDearrowTitles(it) }
+            SwitchRow("থাম্বনেইল", "ভিডিওর আসল দৃশ্য থেকে থাম্বনেইল", DeArrow.thumbs) { vm.toggleDearrowThumbs(it) }
+        }
+
+        // ব্লক তালিকা
+        item {
+            SectionTitle("ব্লক তালিকা")
+            Text("ভিডিও কার্ডের ⋮ মেনু থেকেও \"আগ্রহ নেই\" বা ব্লক করা যায়।", color = Sub, fontSize = 12.sp)
+            Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = kw, onValueChange = { kw = it }, singleLine = true,
+                    label = { Text("কিওয়ার্ড ব্লক") }, modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(8.dp))
+                Button(enabled = kw.isNotBlank(), onClick = { vm.blockKeyword(kw); kw = "" }) { Text("যোগ") }
+            }
+        }
+        items(blocks) { b ->
+            val label = when {
+                b.entry.startsWith("ch:") -> "চ্যানেল: ${b.entry.removePrefix("ch:")}"
+                b.entry.startsWith("kw:") -> "কিওয়ার্ড: ${b.entry.removePrefix("kw:")}"
+                else -> "ভিডিও: ${b.entry.removePrefix("vid:").takeLast(30)}"
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(label, fontSize = 13.sp, modifier = Modifier.weight(1f), maxLines = 1)
+                TextButton(onClick = { vm.removeBlock(b.entry) }) { Text("মুছুন") }
+            }
+        }
+
         // ডেটা
         item {
             SectionTitle("ডেটা")
@@ -102,6 +209,12 @@ fun SettingsTab(vm: MainViewModel) {
             }
             OutlinedButton(onClick = { vm.clearHistory() }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 Text("দেখার ইতিহাস মুছুন")
+            }
+            OutlinedButton(onClick = { exporter.launch("vidplay-profile.json") }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                Text("প্রোফাইল এক্সপোর্ট (সাবস্ক্রিপশন, প্লেলিস্ট, ইতিহাস, রিকমেন্ডেশন)")
+            }
+            OutlinedButton(onClick = { importer.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                Text("প্রোফাইল ইম্পোর্ট")
             }
             Spacer(Modifier.height(24.dp))
         }

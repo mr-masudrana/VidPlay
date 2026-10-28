@@ -1,5 +1,5 @@
 <resources>
-    <style name="Theme.VidPlay" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.VidPlay" parent="Theme.AppCompat.NoActionBar">
         <item name="android:windowBackground">#0F0F0F</item>
         <item name="android:statusBarColor">#0F0F0F</item>
         <item name="android:navigationBarColor">#0F0F0F</item>

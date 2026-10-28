@@ -14,7 +14,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.activity.compose.BackHandler
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -102,8 +107,10 @@ fun HistoryThumb(h: HistoryEntity, modifier: Modifier) {
 }
 
 // ---------- Root ----------
+val LocalVm = staticCompositionLocalOf<MainViewModel?> { null }
+
 @Composable
-fun YtApp(vm: MainViewModel) {
+fun YtApp(vm: MainViewModel) = CompositionLocalProvider(LocalVm provides vm) {
     Box(Modifier.fillMaxSize().background(Bg)) {
         MainScaffold(vm)
         if (vm.channelOpen) ChannelScreen(vm)
@@ -117,14 +124,16 @@ fun YtApp(vm: MainViewModel) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScaffold(vm: MainViewModel) {
-    var searching by remember { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
+    val focus = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
     val tabs = listOf(
         Triple("হোম", Icons.Outlined.Home, "VidPlay"),
         Triple("সাবস্ক্রিপশন", Icons.Outlined.Subscriptions, "সাবস্ক্রিপশন"),
         Triple("লাইব্রেরি", Icons.Outlined.VideoLibrary, "লাইব্রেরি"),
         Triple("সেটিংস", Icons.Outlined.Settings, "সেটিংস")
     )
+    LaunchedEffect(vm.searching) { if (vm.searching) runCatching { focus.requestFocus() } }
+    BackHandler(enabled = vm.searching && vm.tab == 0) { vm.closeSearch() }
 
     Scaffold(
         containerColor = Bg,
@@ -132,17 +141,21 @@ fun MainScaffold(vm: MainViewModel) {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg),
                 title = {
-                    if (searching && vm.tab == 0) {
+                    if (vm.searching && vm.tab == 0) {
                         TextField(
-                            value = query, onValueChange = { query = it },
+                            value = vm.query, onValueChange = { vm.onQuery(it) },
                             placeholder = { Text("সার্চ করুন") }, singleLine = true,
                             colors = TextFieldDefaults.colors(
                                 focusedContainerColor = Chip, unfocusedContainerColor = Chip,
                                 focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent
                             ),
-                            shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(24.dp),
+                            modifier = Modifier.fillMaxWidth().focusRequester(focus)
+                                .onFocusChanged { if (it.isFocused) vm.reopenSuggestions() },
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                            keyboardActions = KeyboardActions(onSearch = { vm.load(query) })
+                            keyboardActions = KeyboardActions(onSearch = {
+                                focusManager.clearFocus(); vm.submitSearch(vm.query)
+                            })
                         )
                     } else Row(verticalAlignment = Alignment.CenterVertically) {
                         if (vm.tab == 0) {
@@ -154,9 +167,8 @@ fun MainScaffold(vm: MainViewModel) {
                 },
                 actions = {
                     if (vm.tab == 0) {
-                        if (searching) IconButton(onClick = { searching = false; query = ""; vm.loadForYou() }) {
-                            Icon(Icons.Filled.Close, null)
-                        } else IconButton(onClick = { searching = true }) { Icon(Icons.Filled.Search, null) }
+                        if (vm.searching) IconButton(onClick = { vm.closeSearch() }) { Icon(Icons.Filled.Close, null) }
+                        else IconButton(onClick = { vm.openSearch() }) { Icon(Icons.Filled.Search, null) }
                     }
                 }
             )
@@ -177,7 +189,39 @@ fun MainScaffold(vm: MainViewModel) {
         }
     ) { pad ->
         Box(Modifier.padding(pad).fillMaxSize()) {
-            when (vm.tab) { 0 -> HomeTab(vm); 1 -> SubsTab(vm); 2 -> LibraryTab(vm); else -> SettingsTab(vm) }
+            when (vm.tab) {
+                0 -> if (vm.searching && vm.showSuggestions) SearchPanel(vm) else HomeTab(vm)
+                1 -> SubsTab(vm)
+                2 -> LibraryTab(vm)
+                else -> SettingsTab(vm)
+            }
+        }
+    }
+}
+
+@Composable
+fun SearchPanel(vm: MainViewModel) {
+    val focusManager = LocalFocusManager.current
+    val showHistory = vm.query.isBlank()
+    val rows = if (showHistory) vm.searchHistory else vm.suggestions
+    LazyColumn(Modifier.fillMaxSize()) {
+        if (showHistory && rows.isEmpty()) item {
+            Text("কী খুঁজতে চান লিখুন", color = Sub, modifier = Modifier.padding(16.dp))
+        }
+        items(rows) { r ->
+            Row(
+                Modifier.fillMaxWidth().clickable { focusManager.clearFocus(); vm.submitSearch(r) }
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(if (showHistory) Icons.Outlined.History else Icons.Outlined.Search, null, tint = Sub,
+                    modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(14.dp))
+                Text(r, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (showHistory) IconButton(onClick = { vm.removeHistory(r) }, modifier = Modifier.size(28.dp)) {
+                    Icon(Icons.Filled.Close, null, tint = Sub, modifier = Modifier.size(16.dp))
+                }
+            }
         }
     }
 }
@@ -237,10 +281,23 @@ fun HomeTab(vm: MainViewModel) {
 // ---------- ভিডিও কার্ড ----------
 @Composable
 fun VideoCard(v: VideoItem, onChannel: () -> Unit = {}, onClick: () -> Unit) {
+    val vm = LocalVm.current
+    var menu by remember { mutableStateOf(false) }
+    var showKw by remember { mutableStateOf(false) }
+
+    // DeArrow
+    val vid = remember(v.url) { DeArrow.videoId(v.url) }
+    if (vid != null && (DeArrow.titles || DeArrow.thumbs)) LaunchedEffect(vid) { DeArrow.ensure(vid) }
+    val brand = vid?.let { DeArrow.cache[it] }
+    val title = if (DeArrow.titles) brand?.title ?: v.title else v.title
+    var origThumb by remember(v.url) { mutableStateOf(false) }
+    val thumb = if (DeArrow.thumbs && !origThumb) brand?.thumb ?: v.thumb else v.thumb
+
     Column(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(bottom = 16.dp)) {
         Box {
             AsyncImage(
-                model = v.thumb, contentDescription = null, contentScale = ContentScale.Crop,
+                model = thumb, contentDescription = null, contentScale = ContentScale.Crop,
+                onError = { origThumb = true },
                 modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Chip)
             )
             Text(
@@ -250,11 +307,11 @@ fun VideoCard(v: VideoItem, onChannel: () -> Unit = {}, onClick: () -> Unit) {
                     .padding(horizontal = 4.dp, vertical = 1.dp)
             )
         }
-        Row(Modifier.padding(12.dp, 12.dp, 12.dp, 0.dp)) {
+        Row(Modifier.padding(12.dp, 12.dp, 4.dp, 0.dp)) {
             Box(Modifier.clickable(onClick = onChannel)) { Avatar(null, v.channel, 36.dp) }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(v.title, fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 20.sp)
+                Text(title, fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 20.sp)
                 Text(
                     listOfNotNull(
                         v.channel.ifBlank { null },
@@ -265,7 +322,47 @@ fun VideoCard(v: VideoItem, onChannel: () -> Unit = {}, onClick: () -> Unit) {
                     modifier = Modifier.padding(top = 2.dp)
                 )
             }
+            if (vm != null) Box {
+                IconButton(onClick = { menu = true }, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Filled.MoreVert, null, modifier = Modifier.size(20.dp))
+                }
+                DropdownMenu(menu, { menu = false }) {
+                    DropdownMenuItem(text = { Text("আগ্রহ নেই") }, onClick = { menu = false; vm.notInterested(v) })
+                    if (v.channel.isNotBlank()) DropdownMenuItem(
+                        text = { Text("\"${v.channel}\" চ্যানেল ব্লক") },
+                        onClick = { menu = false; vm.blockChannel(v.channel) }
+                    )
+                    DropdownMenuItem(text = { Text("কিওয়ার্ড ব্লক…") }, onClick = { menu = false; showKw = true })
+                }
+            }
         }
+    }
+
+    if (showKw && vm != null) {
+        var kw by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showKw = false },
+            title = { Text("কিওয়ার্ড ব্লক") },
+            text = {
+                Column {
+                    Text("যে ভিডিওর টাইটেলে এই শব্দ থাকবে সেগুলো আর দেখাবে না।", color = Sub, fontSize = 12.sp)
+                    OutlinedTextField(kw, { kw = it }, singleLine = true, modifier = Modifier.padding(top = 8.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 8.dp)) {
+                        items(Recommender.keywords(v.title)) { w ->
+                            Text(
+                                w, fontSize = 12.sp,
+                                modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Chip)
+                                    .clickable { kw = w }.padding(horizontal = 10.dp, vertical = 5.dp)
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = kw.isNotBlank(), onClick = { vm.blockKeyword(kw); showKw = false }) { Text("ব্লক করুন") }
+            },
+            dismissButton = { TextButton(onClick = { showKw = false }) { Text("বাতিল") } }
+        )
     }
 }
 
@@ -289,4 +386,10 @@ fun MiniPlayer(vm: MainViewModel) {
         }
         IconButton(onClick = { vm.close() }) { Icon(Icons.Filled.Close, null) }
     }
+}
+
+/** 0 সহ সময় দেখায় (চ্যাপ্টারের জন্য) */
+fun fmtTime(s: Long): String {
+    val h = s / 3600; val m = (s % 3600) / 60; val sec = s % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
 }

@@ -46,6 +46,7 @@ dependencies {
     // YouTube ঘন ঘন বদলায়: ভিডিও না চললে প্রথমে এই ভার্সন আপডেট করুন
     implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.4")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
 
     val media3 = "1.4.1"
     implementation("androidx.media3:media3-exoplayer:$media3")
@@ -63,4 +64,9 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.2")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")
     implementation("io.coil-kt:coil-compose:2.7.0")
+
+    // Chromecast (Google Play Services লাগে)
+    implementation("com.google.android.gms:play-services-cast-framework:21.5.0")
+    implementation("androidx.mediarouter:mediarouter:1.7.0")
+    implementation("androidx.appcompat:appcompat:1.7.0")
 }
