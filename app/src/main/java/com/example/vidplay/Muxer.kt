@@ -9,22 +9,25 @@ import java.nio.ByteBuffer
 
 /** আলাদা ভিডিও (H.264 MP4) ও অডিও (M4A) ফাইলকে রি-এনকোড ছাড়াই একটি MP4-তে জোড়া লাগায়। */
 object Muxer {
-    fun mux(video: File, audio: File, out: File) {
+    fun mux(video: File, audio: File, out: File, webm: Boolean = false) {
         val ve = MediaExtractor()
         val ae = MediaExtractor()
-        val muxer = MediaMuxer(out.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        val muxer = MediaMuxer(
+            out.absolutePath,
+            if (webm) MediaMuxer.OutputFormat.MUXER_OUTPUT_WEBM else MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4
+        )
         try {
             ve.setDataSource(video.absolutePath)
             ae.setDataSource(audio.absolutePath)
             val vt = track(ve, "video/")
             val at = track(ae, "audio/")
-            require(vt >= 0 && at >= 0) { "ভিডিও/অডিও ট্র্যাক পাওয়া যায়নি" }
+            require(vt >= 0 && at >= 0) { L.t("ভিডিও/অডিও ট্র্যাক পাওয়া যায়নি") }
             ve.selectTrack(vt); ae.selectTrack(at)
             val vi = muxer.addTrack(ve.getTrackFormat(vt))
             val ai = muxer.addTrack(ae.getTrackFormat(at))
             muxer.start()
 
-            val vb = ByteBuffer.allocate(4 * 1024 * 1024)
+            val vb = ByteBuffer.allocate(16 * 1024 * 1024)
             val ab = ByteBuffer.allocate(1024 * 1024)
             val info = MediaCodec.BufferInfo()
             var vTime = ve.sampleTime

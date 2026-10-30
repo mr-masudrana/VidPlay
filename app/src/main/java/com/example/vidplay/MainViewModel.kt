@@ -2,6 +2,7 @@ package com.example.vidplay
 
 import android.app.Application
 import android.content.Context
+import android.database.sqlite.SQLiteDatabase
 import android.net.ConnectivityManager
 import android.net.Uri
 import android.widget.Toast
@@ -36,12 +37,21 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import org.schabi.newpipe.extractor.Page
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.SubtitlesStream
 import java.io.File
+import java.util.zip.ZipInputStream
 import java.util.concurrent.Executors
 
 private fun JSONArray.objects(): List<JSONObject> = (0 until length()).map { getJSONObject(it) }
+
+data class QItem(val url: String, val title: String, val channel: String, val thumb: String?)
+
+data class ReplyState(
+    val items: List<CommentItem> = emptyList(), val next: Page? = null,
+    val loading: Boolean = false, val expanded: Boolean = false
+)
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val ctx = app
@@ -62,6 +72,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var sponsorOn by mutableStateOf(prefs.sponsorBlock); private set
     var rydOn by mutableStateOf(prefs.ryd); private set
     var captionSizeIndex by mutableStateOf(prefs.captionSize); private set
+    var captionColorIndex by mutableStateOf(prefs.captionColor); private set
+    var captionBgIndex by mutableStateOf(prefs.captionBg); private set
     var qualityWifi by mutableStateOf(prefs.qualityWifi); private set
     var qualityMobile by mutableStateOf(prefs.qualityMobile); private set
     var skipSilence by mutableStateOf(prefs.skipSilence); private set
@@ -109,6 +121,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var comments by mutableStateOf<List<CommentItem>>(emptyList()); private set
     var commentsTotal by mutableStateOf(0); private set
     var commentsLoading by mutableStateOf(false); private set
+    var commentsLoadingMore by mutableStateOf(false); private set
+    var commentsMore by mutableStateOf(false); private set
+    var commentSort by mutableStateOf(0); private set      // 0 শীর্ষ, 1 নতুন, 2 পুরনো
+    var replyStates by mutableStateOf<Map<String, ReplyState>>(emptyMap()); private set
+    private var commentsUrl = ""
+    private var commentsNextPage: Page? = null
 
     // চ্যানেল
     var channelOpen by mutableStateOf(false); private set
@@ -117,6 +135,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // রিকমেন্ডেশন ড্যাশবোর্ড
     var topInterests by mutableStateOf<List<Pair<String, Double>>>(emptyList()); private set
+    var contextInterests by mutableStateOf<List<Pair<String, Double>>>(emptyList()); private set
+    var shorts by mutableStateOf<List<VideoItem>>(emptyList()); private set
+    var shortsLoading by mutableStateOf(false); private set
+    private var shortsRound = 0
+    var langMode by mutableStateOf(prefs.lang); private set
+    var floatingMini by mutableStateOf(prefs.floatMini); private set
+    var pipX by mutableStateOf(Float.NaN)       // ভাসমান প্লেয়ারের অবস্থান (NaN = ডিফল্ট কোণ)
+    var pipY by mutableStateOf(Float.NaN)
 
     // Chromecast
     var castAvailable by mutableStateOf(false); private set
@@ -125,9 +151,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var castContext: CastContext? = null
 
     private var segments: List<Segment> = emptyList()
-    private var boosted = false
-    private var queue: List<String> = emptyList()
-    private var queueIndex = 0
+    private var milestone = 0
+    var queueItems by mutableStateOf<List<QItem>>(emptyList()); private set
+    var queueIndex by mutableStateOf(0); private set
+    var shuffle by mutableStateOf(false); private set
+    var repeat by mutableStateOf(0); private set          // 0 বন্ধ, 1 কিউ, 2 একটি ভিডিও
+    private val playedInQueue = HashSet<String>()
 
     val active get() = current != null || local != null
     val title get() = current?.name ?: local?.title ?: ""
@@ -147,6 +176,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         player.skipSilenceEnabled = skipSilence
+        L.apply(prefs.lang)
         DeArrow.titles = prefs.dearrowTitles; DeArrow.thumbs = prefs.dearrowThumbs
         viewModelScope.launch { if (!DownloadEngine.isActive) dao.resetInterrupted() }
         loadForYou()
@@ -158,14 +188,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             override fun onPlaybackStateChanged(state: Int) {
                 // প্লেলিস্ট/কিউ: শেষ হলে পরেরটা
                 if (state == Player.STATE_ENDED && sleepAtEnd) {
-                    sleepAtEnd = false; toast("স্লিপ টাইমার: প্লেব্যাক বন্ধ"); return
+                    sleepAtEnd = false; toast(L.t("স্লিপ টাইমার: প্লেব্যাক বন্ধ")); return
                 }
-                if (state == Player.STATE_ENDED && queue.isNotEmpty() && queueIndex + 1 < queue.size) {
-                    queueIndex++
-                    startPlay(queue[queueIndex])
-                }
+                if (state == Player.STATE_ENDED) advanceQueue()
             }
-            override fun onPlayerError(e: PlaybackException) { error = e.message ?: "প্লেব্যাক এরর" }
+            override fun onPlayerError(e: PlaybackException) { error = e.message ?: L.t("প্লেব্যাক এরর") }
         })
         // Chromecast (Google Play Services না থাকলে নীরবে বাদ)
         runCatching {
@@ -181,20 +208,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             while (true) {
                 delay(500)
                 if (sleepEnd > 0 && System.currentTimeMillis() >= sleepEnd) {
-                    sleepEnd = 0; player.pause(); castClient()?.pause(); toast("স্লিপ টাইমার: প্লেব্যাক বন্ধ")
+                    sleepEnd = 0; player.pause(); castClient()?.pause(); toast(L.t("স্লিপ টাইমার: প্লেব্যাক বন্ধ"))
                 }
-                if (expanded) { positionMs = player.currentPosition; durationMs = player.duration.coerceAtLeast(0L) }
+                if (active) { positionMs = player.currentPosition; durationMs = player.duration.coerceAtLeast(0L) }
                 val info = current
                 if (info == null || !player.isPlaying) continue
                 val pos = player.currentPosition
                 if (sponsorOn) {
                     segments.firstOrNull { pos >= it.startMs && pos < it.endMs - 400 }?.let {
                         player.seekTo(it.endMs)
-                        toast("স্পন্সর অংশ বাদ দেওয়া হয়েছে")
+                        toast(L.t("স্পন্সর অংশ বাদ দেওয়া হয়েছে"))
                     }
                 }
-                if (!boosted && info.duration > 0 && pos > info.duration * 500) {
-                    boosted = true; boost(info, 2.0)
+                if (info.duration > 0) {
+                    val f = pos / (info.duration * 1000.0)
+                    if (milestone < 1 && f > 0.5) { milestone = 1; boost(info, 1.5) }
+                    if (milestone < 2 && f > 0.9) { milestone = 2; boost(info, 1.0) }
                 }
                 n++
                 if (n % 20 == 0) saveProgress()
@@ -209,7 +238,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         loading = true; error = null
         try {
             feed = filterBlocked(if (query.isNullOrBlank()) YtRepository.trending() else YtRepository.search(query))
-        } catch (e: Exception) { error = e.message ?: "লোড করা যায়নি" }
+        } catch (e: Exception) { error = e.message ?: L.t("লোড করা যায়নি") }
         loading = false
     }
 
@@ -225,43 +254,124 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 jobs.awaitAll()
             }
             val merged = pools.flatten().distinctBy { it.url }
-            feed = filterBlocked(Recommender.rank(merged, interests, dao.watchedUrls().toSet()))
-            if (feed.isEmpty()) error = "কোনো ভিডিও পাওয়া যায়নি"
-        } catch (e: Exception) { error = e.message ?: "লোড করা যায়নি" }
+            feed = filterBlocked(
+                Recommender.rank(
+                    merged, interests, dao.watchedUrls().toSet(), history.value,
+                    subs.value.map { it.name.lowercase() }.toSet()
+                )
+            )
+            if (feed.isEmpty()) error = L.t("কোনো ভিডিও পাওয়া যায়নি")
+        } catch (e: Exception) { error = e.message ?: L.t("লোড করা যায়নি") }
         loading = false
     }
 
-    fun loadSubsFeed() = viewModelScope.launch {
+    fun loadSubsFeed(force: Boolean = false) = viewModelScope.launch {
         val list = subs.value.take(10)
         if (list.isEmpty()) { subsFeed = emptyList(); return@launch }
+        val key = list.map { it.url }.hashCode()
+        val cached = withContext(Dispatchers.IO) { SubsCache.load(ctx) }
+        val sameSet = cached != null && cached.key == key
+        if (cached != null && sameSet && subsFeed.isEmpty()) subsFeed = filterBlocked(cached.items)   // ক্যাশ থেকে সাথে সাথে
+        if (!force && cached != null && sameSet && System.currentTimeMillis() - cached.time < 30 * 60_000L) return@launch
+
         loading = true
-        val lists = list.map { s ->
-            async { runCatching { YtRepository.channel(s.url).videos.take(4) }.getOrDefault(emptyList()) }
+        val lists = list.map { sub ->
+            async { runCatching { YtRepository.channel(sub.url).videos.take(4) }.getOrDefault(emptyList()) }
         }.awaitAll()
         val max = lists.maxOfOrNull { it.size } ?: 0
-        subsFeed = filterBlocked((0 until max).flatMap { i -> lists.mapNotNull { it.getOrNull(i) } })
+        val merged = (0 until max).flatMap { i -> lists.mapNotNull { it.getOrNull(i) } }
+        if (merged.isNotEmpty()) {
+            subsFeed = filterBlocked(merged)
+            withContext(Dispatchers.IO) { SubsCache.save(ctx, key, merged) }
+        }
         loading = false
     }
 
     // ---------- প্লেব্যাক ----------
-    fun play(url: String) { queue = emptyList(); startPlay(url) }
+    fun play(url: String) { clearQueue(); startPlay(url) }
 
-    fun playQueue(urls: List<String>, index: Int) {
-        if (urls.isEmpty()) return
-        queue = urls; queueIndex = index.coerceIn(0, urls.lastIndex)
-        startPlay(urls[queueIndex])
+    fun playQueueItems(items: List<QItem>, index: Int, shuffleStart: Boolean = false) {
+        if (items.isEmpty()) return
+        queueItems = items; playedInQueue.clear()
+        if (shuffleStart) { shuffle = true; queueIndex = items.indices.random() }
+        else queueIndex = index.coerceIn(0, items.lastIndex)
+        startPlay(items[queueIndex].url)
+    }
+
+    private fun clearQueue() { queueItems = emptyList(); queueIndex = 0; playedInQueue.clear() }
+
+    /** ভিডিও শেষে: শাফল/রিপিট অনুযায়ী কিউর পরের আইটেম */
+    private fun advanceQueue() {
+        if (queueItems.isEmpty()) return
+        val n = queueItems.size
+        queueItems.getOrNull(queueIndex)?.let { playedInQueue.add(it.url) }
+        val next: Int = if (shuffle) {
+            val remaining = queueItems.indices.filter { queueItems[it].url !in playedInQueue && it != queueIndex }
+            if (remaining.isNotEmpty()) remaining.random()
+            else if (repeat == 1) {
+                playedInQueue.clear()
+                queueItems.indices.filter { it != queueIndex }.randomOrNull() ?: queueIndex
+            } else -1
+        } else if (queueIndex + 1 < n) queueIndex + 1
+        else if (repeat == 1) 0
+        else -1
+        if (next >= 0) { queueIndex = next; startPlay(queueItems[next].url) }
+    }
+
+    /** কার্ডের মেনু থেকে: পরে চালান (playNext) বা কিউর শেষে যোগ */
+    fun addToQueue(v: VideoItem, playNext: Boolean) {
+        val item = QItem(v.url, v.title, v.channel, v.thumb)
+        if (!active) { playQueueItems(listOf(item), 0); return }
+        if (queueItems.isEmpty()) {
+            val cur = current
+            queueItems = if (cur != null)
+                listOf(QItem(cur.url, cur.name, cur.uploaderName ?: "", cur.thumbnails.lastOrNull()?.url))
+            else emptyList()
+            queueIndex = 0
+        }
+        val at = if (playNext) (queueIndex + 1).coerceIn(0, queueItems.size) else queueItems.size
+        queueItems = queueItems.toMutableList().also { it.add(at, item) }
+        toast(L.t("কিউতে যোগ হয়েছে"))
+    }
+
+    fun queuePlayAt(i: Int) {
+        val q = queueItems.getOrNull(i) ?: return
+        queueIndex = i
+        startPlay(q.url)
+    }
+
+    fun queueRemove(i: Int) {
+        if (i !in queueItems.indices) return
+        queueItems = queueItems.toMutableList().also { it.removeAt(i) }
+        if (i < queueIndex || i == queueIndex) queueIndex -= 1
+        if (queueItems.isEmpty()) queueIndex = 0
+    }
+
+    fun queueMove(i: Int, delta: Int) {
+        val j = i + delta
+        if (i !in queueItems.indices || j !in queueItems.indices) return
+        val cur = queueItems.getOrNull(queueIndex)?.url
+        queueItems = queueItems.toMutableList().also { val t = it[i]; it[i] = it[j]; it[j] = t }
+        if (cur != null) queueIndex = queueItems.indexOfFirst { it.url == cur }
+    }
+
+    fun queueClear() = clearQueue()
+    fun toggleShuffle(v: Boolean) { shuffle = v; playedInQueue.clear() }
+    fun chooseRepeat(m: Int) {
+        repeat = m; loop = (m == 2)
+        player.repeatMode = if (m == 2) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
     }
 
     private fun startPlay(url: String) = viewModelScope.launch {
         error = null; opening = true
-        saveProgress()
+        saveProgress(); recordSkip()
         try {
             val info = YtRepository.streamInfo(url)
             val h = dao.historyOf(info.url)
             val start = if (h != null && h.positionMs > 5_000 &&
                 (info.duration <= 0 || h.positionMs < info.duration * 1000 - 15_000)) h.positionMs else 0L
 
-            local = null; current = info; boosted = false; segments = emptyList()
+            local = null; current = info; milestone = 0; segments = emptyList()
             quality = defaultQuality(YtRepository.heights(info))
             heights = YtRepository.heights(info)
             related = filterBlocked(YtRepository.related(info))
@@ -280,17 +390,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
             if (castName != null) castLoad(info, start)
             writeHistory(info, start)
-            boost(info, 1.0)
+            boost(info, 0.5)
             loadComments(url)
             if (sponsorOn) loadSegments(info.id)
             if (rydOn) loadRyd(info.id)
-        } catch (e: Exception) { error = e.message ?: "ভিডিও চালানো যায়নি"; toast(error!!) }
+        } catch (e: Exception) { error = e.message ?: L.t("ভিডিও চালানো যায়নি"); toast(error!!) }
         opening = false
     }
 
     fun playLocal(d: DownloadEntity) {
         saveProgress()
-        queue = emptyList()
+        clearQueue()
         current = null; local = d; related = emptyList(); comments = emptyList(); heights = emptyList()
         likes = null; dislikes = null; segments = emptyList(); captions = emptyList(); captionIndex = -1
         applyTextSelection()
@@ -329,6 +439,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun chooseCaptionSize(i: Int) { captionSizeIndex = i; prefs.captionSize = i }
+    fun chooseCaptionColor(i: Int) { captionColorIndex = i; prefs.captionColor = i }
+    fun chooseCaptionBg(i: Int) { captionBgIndex = i; prefs.captionBg = i }
     fun chooseSpeed(s: Float) { speed = s; player.setPlaybackSpeed(s) }
 
     // ---------- ডিফল্ট কোয়ালিটি, লুপ, অডিও-অনলি, স্লিপ টাইমার ----------
@@ -385,6 +497,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         query = t; showSuggestions = false
         searchHistory = (listOf(t) + searchHistory.filter { it != t }).take(20)
         prefs.searchHistory = searchHistory
+        viewModelScope.launch { Recommender.boostQuery(dao, t, 0.8) }
         load(t)
     }
 
@@ -411,7 +524,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun addBlock(entry: String) = viewModelScope.launch {
         dao.addBlock(BlockEntity(entry))
         feed = filterBlocked(feed, entry); subsFeed = filterBlocked(subsFeed, entry); related = filterBlocked(related, entry)
-        toast("লুকানো হয়েছে")
+        toast(L.t("লুকানো হয়েছে"))
     }
 
     fun notInterested(v: VideoItem) {
@@ -433,16 +546,54 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun checkNewNow() {
         NotifyScheduler.runNow(ctx)
-        toast("চেক শুরু হয়েছে। প্রথমবার শুধু বর্তমান ভিডিওগুলো \"দেখা\" হিসেবে ধরা হয়।")
+        toast(L.t("চেক শুরু হয়েছে। প্রথমবার শুধু বর্তমান ভিডিওগুলো \"দেখা\" হিসেবে ধরা হয়।"))
     }
     fun toggleDearrowTitles(v: Boolean) { DeArrow.titles = v; prefs.dearrowTitles = v }
     fun toggleDearrowThumbs(v: Boolean) { DeArrow.thumbs = v; prefs.dearrowThumbs = v }
 
+    // ---------- শর্টস ----------
+    fun pauseMain() { player.pause() }
+
+    fun loadShorts(more: Boolean = false) = viewModelScope.launch {
+        if (shortsLoading) return@launch
+        shortsLoading = true
+        try {
+            if (!more) shortsRound = 0
+            val interests = dao.interests()
+            val topics = Recommender.top(interests, 12).map { it.first }
+                .filter { it.startsWith("kw:") }.map { it.removePrefix("kw:") }
+            val fallback = listOf("trending", "funny", "music", "news")
+            val picks = topics.drop(shortsRound * 2).take(2).ifEmpty { listOf(fallback[shortsRound % fallback.size]) } +
+                    (if (!more) listOf("shorts") else emptyList())
+            shortsRound++
+            val existing = shorts.map { it.url }.toSet()
+            val fresh = filterBlocked(YtRepository.shorts(picks).filter { it.url !in existing })
+            val ranked = Recommender.rank(
+                fresh, interests, dao.watchedUrls().toSet(), history.value, subs.value.map { it.name.lowercase() }.toSet()
+            )
+            shorts = if (more) shorts + ranked else ranked
+        } catch (e: Exception) { toast(e.message ?: L.t("শর্টস লোড করা যায়নি")) }
+        shortsLoading = false
+    }
+
+    fun onShortShown(v: VideoItem) = viewModelScope.launch { Recommender.boost(dao, v.title, v.channel, 0.4) }
+
+    fun toggleFavoriteItem(v: VideoItem) = viewModelScope.launch {
+        if (favorites.value.any { it.url == v.url }) dao.removeFavorite(v.url)
+        else {
+            dao.addFavorite(FavoriteEntity(v.url, v.title, v.channel, v.thumb, v.durationSec, System.currentTimeMillis()))
+            Recommender.boost(dao, v.title, v.channel, 3.0)
+        }
+    }
+
+    fun chooseLang(m: Int) { langMode = m; prefs.lang = m; L.apply(m) }
+    fun toggleFloatingMini(v: Boolean) { floatingMini = v; prefs.floatMini = v }
+
     fun expand() { if (active) expanded = true }
     fun minimize() { expanded = false }
     fun close() {
-        saveProgress()
-        queue = emptyList()
+        saveProgress(); recordSkip()
+        clearQueue()
         player.stop(); player.clearMediaItems()
         current = null; local = null; expanded = false
     }
@@ -462,7 +613,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun castLoad(info: StreamInfo, posMs: Long) {
         val client = castClient() ?: return
         val stream = YtRepository.castStream(info)
-        if (stream == null) { toast("এই ভিডিও কাস্ট করা যাবে না"); return }
+        if (stream == null) { toast(L.t("এই ভিডিও কাস্ট করা যাবে না")); return }
         val meta = MediaMetadata(MediaMetadata.MEDIA_TYPE_MOVIE)
         meta.putString(MediaMetadata.KEY_TITLE, info.name)
         info.thumbnails.lastOrNull()?.url?.let { meta.addImage(WebImage(Uri.parse(it))) }
@@ -500,25 +651,42 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (pos > 0) writeHistory(info, pos)
     }
 
+    /** শুরুর ১০% এর মধ্যেই ছেড়ে গেলে স্কিপ ধরে হালকা নেগেটিভ সিগন্যাল */
+    private fun recordSkip() {
+        val info = current ?: return
+        if (milestone == 0 && info.duration > 60 && player.currentPosition < info.duration * 100) {
+            milestone = 3
+            boost(info, -0.8)
+        }
+    }
+
     private fun boost(info: StreamInfo, weight: Double) = viewModelScope.launch {
         Recommender.boost(dao, info.name, info.uploaderName ?: "", weight)
     }
 
-    fun loadInterests() = viewModelScope.launch { topInterests = Recommender.top(dao.interests(), 12) }
-    fun resetProfile() = viewModelScope.launch { dao.clearInterests(); topInterests = emptyList(); toast("প্রোফাইল রিসেট হয়েছে") }
-    fun clearHistory() = viewModelScope.launch { dao.clearHistory(); toast("ইতিহাস মুছে গেছে") }
+    fun loadInterests() = viewModelScope.launch {
+        val all = dao.interests()
+        topInterests = Recommender.top(all, 12)
+        contextInterests = Recommender.topForBucket(all, 8)
+    }
+    fun resetProfile() = viewModelScope.launch { dao.clearInterests(); topInterests = emptyList(); toast(L.t("প্রোফাইল রিসেট হয়েছে")) }
+    fun clearHistory() = viewModelScope.launch { dao.clearHistory(); toast(L.t("ইতিহাস মুছে গেছে")) }
 
     // ---------- ফেভারিট ও প্লেলিস্ট ----------
     fun toggleFavorite() {
         val info = current ?: return
         viewModelScope.launch {
-            if (favorites.value.any { it.url == info.url }) dao.removeFavorite(info.url)
-            else dao.addFavorite(
-                FavoriteEntity(
-                    info.url, info.name, info.uploaderName ?: "", info.thumbnails.lastOrNull()?.url,
-                    info.duration, System.currentTimeMillis()
+            if (favorites.value.any { it.url == info.url }) {
+                dao.removeFavorite(info.url)
+            } else {
+                dao.addFavorite(
+                    FavoriteEntity(
+                        info.url, info.name, info.uploaderName ?: "", info.thumbnails.lastOrNull()?.url,
+                        info.duration, System.currentTimeMillis()
+                    )
                 )
-            )
+                Recommender.boost(dao, info.name, info.uploaderName ?: "", 3.0)   // ফেভারিট = লাইক
+            }
         }
     }
 
@@ -537,7 +705,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun addToPlaylist(pid: Long) {
         val info = current ?: return
         viewModelScope.launch {
-            if (dao.countItem(pid, info.url) > 0) { toast("আগে থেকেই আছে"); return@launch }
+            if (dao.countItem(pid, info.url) > 0) { toast(L.t("আগে থেকেই আছে")); return@launch }
             dao.addPlaylistItem(
                 PlaylistItemEntity(
                     playlistId = pid, url = info.url, title = info.name, channel = info.uploaderName ?: "",
@@ -545,7 +713,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     addedAt = System.currentTimeMillis()
                 )
             )
-            toast("প্লেলিস্টে যোগ হয়েছে")
+            toast(L.t("প্লেলিস্টে যোগ হয়েছে"))
         }
     }
 
@@ -570,9 +738,61 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- মন্তব্য ----------
     private fun loadComments(url: String) = viewModelScope.launch {
-        commentsLoading = true; comments = emptyList(); commentsTotal = 0
-        runCatching { YtRepository.comments(url) }.onSuccess { (n, list) -> commentsTotal = n; comments = list }
+        commentsUrl = url; commentsNextPage = null; commentsMore = false
+        commentsLoading = true; comments = emptyList(); commentsTotal = 0; replyStates = emptyMap()
+        runCatching { YtRepository.comments(url) }.onSuccess { p ->
+            comments = p.items; commentsNextPage = p.next; commentsMore = p.next != null
+        }
         commentsLoading = false
+    }
+
+    /** স্ক্রোল শেষের কাছে এলে পরের পেজ */
+    fun loadMoreComments() {
+        val page = commentsNextPage ?: return
+        if (commentsLoadingMore) return
+        viewModelScope.launch {
+            commentsLoadingMore = true
+            runCatching { YtRepository.moreComments(commentsUrl, page) }
+                .onSuccess { p ->
+                    val have = comments.map { it.id }.toSet()
+                    comments = comments + p.items.filter { it.id !in have }
+                    commentsNextPage = p.next; commentsMore = p.next != null
+                }
+                .onFailure { commentsMore = false }
+            commentsLoadingMore = false
+        }
+    }
+
+    fun chooseCommentSort(i: Int) { commentSort = i }
+
+    /** 0 শীর্ষ (YouTube-এর ক্রম), 1 নতুন, 2 পুরনো। লোড হওয়া মন্তব্যের মধ্যে সাজানো হয়। */
+    fun sortedComments(): List<CommentItem> = when (commentSort) {
+        1 -> comments.sortedByDescending { it.time ?: Long.MIN_VALUE }
+        2 -> comments.sortedBy { it.time ?: Long.MAX_VALUE }
+        else -> comments
+    }
+
+    fun toggleReplies(c: CommentItem) {
+        val cur = replyStates[c.id]
+        if (cur != null && cur.expanded) { replyStates = replyStates + (c.id to cur.copy(expanded = false)); return }
+        if (cur != null && cur.items.isNotEmpty()) { replyStates = replyStates + (c.id to cur.copy(expanded = true)); return }
+        val page = c.replies ?: return
+        loadReplies(c.id, page)
+    }
+
+    fun loadMoreReplies(c: CommentItem) {
+        val page = replyStates[c.id]?.next ?: return
+        loadReplies(c.id, page)
+    }
+
+    private fun loadReplies(id: String, page: Page) = viewModelScope.launch {
+        val cur = replyStates[id] ?: ReplyState()
+        replyStates = replyStates + (id to cur.copy(loading = true, expanded = true))
+        val res = runCatching { YtRepository.moreComments(commentsUrl, page) }.getOrNull()
+        val st = replyStates[id] ?: cur
+        replyStates = replyStates + (id to
+                if (res != null) st.copy(items = st.items + res.items, next = res.next, loading = false)
+                else st.copy(loading = false))
     }
 
     // ---------- চ্যানেল ও সাবস্ক্রিপশন ----------
@@ -581,32 +801,99 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         expanded = false; channelOpen = true; channel = null
         viewModelScope.launch {
             channelLoading = true
-            try { channel = YtRepository.channel(url) } catch (e: Exception) { error = e.message }
+try {
+                val ch = YtRepository.channel(url)
+                channel = ch
+                subs.value.firstOrNull { it.url == url || it.url == ch.url }?.let { s ->
+                    if (s.avatar == null && ch.avatar != null) dao.addSub(s.copy(avatar = ch.avatar))
+                }
+            } catch (e: Exception) { error = e.message }
             channelLoading = false
         }
     }
     fun closeChannel() { channelOpen = false }
 
     fun toggleSub(url: String, name: String, avatar: String?) = viewModelScope.launch {
-        if (subs.value.any { it.url == url }) dao.removeSub(url) else dao.addSub(SubEntity(url, name, avatar))
+        if (subs.value.any { it.url == url }) dao.removeSub(url)
+        else {
+            dao.addSub(SubEntity(url, name, avatar))
+            Recommender.boost(dao, "", name, 2.0)
+        }
     }
 
-    /** NewPipe-এর "সাবস্ক্রিপশন এক্সপোর্ট" JSON ফাইল ইম্পোর্ট */
+    /** NewPipe: সাবস্ক্রিপশন JSON অথবা পুরো ব্যাকআপ ZIP (সাবস্ক্রিপশন + ইতিহাস) */
     fun importNewPipe(uri: Uri) = viewModelScope.launch {
         try {
-            val text = withContext(Dispatchers.IO) {
-                ctx.contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() }
+            val bytes = withContext(Dispatchers.IO) {
+                ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
             }
-            val arr = JSONObject(text).getJSONArray("subscriptions")
-            var n = 0
-            for (i in 0 until arr.length()) {
-                val o = arr.getJSONObject(i)
-                if (o.optInt("service_id", 0) == 0) {
-                    dao.addSub(SubEntity(o.getString("url"), o.optString("name", "?"), null)); n++
+            if (bytes.size > 2 && bytes[0] == 'P'.code.toByte() && bytes[1] == 'K'.code.toByte()) {
+                val (subsN, histN) = withContext(Dispatchers.IO) { importNewPipeZip(bytes) }
+                toast(L.f("{0} টি চ্যানেল ও {1} টি ইতিহাস ইম্পোর্ট হয়েছে", subsN, histN))
+                loadInterests()
+            } else {
+                val arr = JSONObject(String(bytes)).getJSONArray("subscriptions")
+                var n = 0
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    if (o.optInt("service_id", 0) == 0) {
+                        dao.addSub(SubEntity(o.getString("url"), o.optString("name", "?"), null)); n++
+                    }
+                }
+                toast(L.f("{0} টি চ্যানেল ইম্পোর্ট হয়েছে", n))
+            }
+        } catch (e: Exception) { toast(L.f("ইম্পোর্ট ব্যর্থ: {0}", e.message)) }
+    }
+
+    private suspend fun importNewPipeZip(bytes: ByteArray): Pair<Int, Int> {
+        val dbFile = File(ctx.cacheDir, "newpipe_import.db")
+        var found = false
+        ZipInputStream(bytes.inputStream()).use { zin ->
+            var e = zin.nextEntry
+            while (e != null) {
+                if (e.name.endsWith("newpipe.db")) {
+                    dbFile.outputStream().use { out -> zin.copyTo(out) }
+                    found = true
+                    break
+                }
+                e = zin.nextEntry
+            }
+        }
+        require(found) { L.t("ZIP-এ newpipe.db পাওয়া যায়নি") }
+
+        var subsN = 0
+        var histN = 0
+        val db = SQLiteDatabase.openDatabase(dbFile.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
+        try {
+            db.rawQuery("SELECT url, name, avatar_url FROM subscriptions WHERE service_id = 0", null).use { c ->
+                while (c.moveToNext()) {
+                    dao.addSub(SubEntity(c.getString(0), c.getString(1) ?: "?", c.getString(2))); subsN++
                 }
             }
-            toast("$n টি চ্যানেল ইম্পোর্ট হয়েছে")
-        } catch (e: Exception) { toast("ইম্পোর্ট ব্যর্থ: ${e.message}") }
+            val hist = ArrayList<HistoryEntity>()
+            db.rawQuery(
+                "SELECT s.url, s.title, s.uploader, s.uploader_url, s.thumbnail_url, s.duration, h.access_date, " +
+                        "COALESCE(st.progress_time, 0) FROM stream_history h JOIN streams s ON s.uid = h.stream_id " +
+                        "LEFT JOIN stream_state st ON st.stream_id = s.uid WHERE s.service_id = 0 " +
+                        "ORDER BY h.access_date DESC LIMIT 800", null
+            ).use { c ->
+                while (c.moveToNext()) {
+                    hist.add(
+                        HistoryEntity(
+                            c.getString(0), c.getString(1) ?: "", c.getString(2) ?: "", c.getString(3),
+                            c.getString(4), c.getLong(5), c.getLong(7), c.getLong(6)
+                        )
+                    )
+                }
+            }
+            val uniq = hist.distinctBy { it.url }        // নতুনটাই আগে থাকে
+            uniq.forEach { dao.upsertHistory(it) }
+            histN = uniq.size
+            Recommender.seed(dao, uniq.take(300).map { it.title to it.channel }, 0.5)   // রিকমেন্ডেশন প্রোফাইলের বীজ
+        } finally {
+            db.close(); dbFile.delete()
+        }
+        return subsN to histN
     }
 
     // ---------- প্রোফাইল এক্সপোর্ট / ইম্পোর্ট ----------
@@ -662,8 +949,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             withContext(Dispatchers.IO) {
                 ctx.contentResolver.openOutputStream(uri, "wt")!!.bufferedWriter().use { it.write(root.toString(2)) }
             }
-            toast("প্রোফাইল এক্সপোর্ট হয়েছে")
-        } catch (e: Exception) { toast("এক্সপোর্ট ব্যর্থ: ${e.message}") }
+            toast(L.t("প্রোফাইল এক্সপোর্ট হয়েছে"))
+        } catch (e: Exception) { toast(L.f("এক্সপোর্ট ব্যর্থ: {0}", e.message)) }
     }
 
     fun importProfile(uri: Uri) = viewModelScope.launch {
@@ -672,7 +959,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 ctx.contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() }
             }
             val root = JSONObject(text)
-            if (root.optString("app") != "vidplay") { toast("এটি VidPlay-এর প্রোফাইল ফাইল নয়"); return@launch }
+            if (root.optString("app") != "vidplay") { toast(L.t("এটি VidPlay-এর প্রোফাইল ফাইল নয়")); return@launch }
             fun s(o: JSONObject, k: String): String? = o.optString(k).takeIf { it.isNotEmpty() && it != "null" }
 
             root.optJSONArray("subs")?.objects()?.forEach {
@@ -722,9 +1009,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 toggleSkipSilence(it.optBoolean("skipSilence", skipSilence))
                 prefs.captionLang = it.optString("captionLang", "")
             }
-            toast("প্রোফাইল ইম্পোর্ট হয়েছে")
+            toast(L.t("প্রোফাইল ইম্পোর্ট হয়েছে"))
             loadInterests()
-        } catch (e: Exception) { toast("ইম্পোর্ট ব্যর্থ: ${e.message}") }
+        } catch (e: Exception) { toast(L.f("ইম্পোর্ট ব্যর্থ: {0}", e.message)) }
     }
 
     // ---------- ডাউনলোড (কিউ, থামানো/চালু, মার্জ) ----------
@@ -735,8 +1022,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 Downloads.enqueue(ctx, dao, info, o)
-                toast("ডাউনলোড কিউতে যোগ হয়েছে")
-            } catch (ex: Exception) { toast(ex.message ?: "ডাউনলোড ব্যর্থ") }
+                toast(L.t("ডাউনলোড কিউতে যোগ হয়েছে"))
+            } catch (ex: Exception) { toast(ex.message ?: L.t("ডাউনলোড ব্যর্থ")) }
         }
     }
 

@@ -35,7 +35,7 @@ fun ChannelScreen(vm: MainViewModel) {
         if (ch == null) {
             Box(Modifier.fillMaxSize(), Alignment.Center) {
                 if (vm.channelLoading) CircularProgressIndicator(color = YtRed)
-                else Text(vm.error ?: "চ্যানেল লোড করা যায়নি", color = Sub)
+                else Text(vm.error ?: L.t("চ্যানেল লোড করা যায়নি"), color = Sub)
             }
             return@Column
         }
@@ -65,8 +65,8 @@ fun ChannelScreen(vm: MainViewModel) {
                         containerColor = if (subbed) Chip else MaterialTheme.colorScheme.onBackground,
                         contentColor = if (subbed) MaterialTheme.colorScheme.onBackground else Bg
                     )
-                ) { Text(if (subbed) "সাবস্ক্রাইবড" else "সাবস্ক্রাইব") }
-                Text("ভিডিও", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(16.dp, 0.dp, 16.dp, 8.dp))
+                ) { Text(if (subbed) L.t("সাবস্ক্রাইবড") else L.t("সাবস্ক্রাইব")) }
+                Text(L.t("ভিডিও"), fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(16.dp, 0.dp, 16.dp, 8.dp))
             }
             items(ch.videos) { v -> VideoCard(v) { vm.play(v.url) } }
         }

@@ -15,7 +15,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -44,7 +52,12 @@ val Palettes = listOf(
     Palette("লাইট", Color(0xFFFFFFFF), Color(0xFFF0F0F0), Color(0xFF606060), Color(0xFFFF0000), true),
     Palette("Ocean Blue", Color(0xFF0B1622), Color(0xFF17283B), Color(0xFF8FA8C0), Color(0xFF4FC3F7), false),
     Palette("Forest Green", Color(0xFF0D1A12), Color(0xFF1B2E22), Color(0xFF8FB09A), Color(0xFF66BB6A), false),
-    Palette("Crimson", Color(0xFF140A0C), Color(0xFF2A1519), Color(0xFFBD9AA0), Color(0xFFE53935), false)
+    Palette("Crimson", Color(0xFF140A0C), Color(0xFF2A1519), Color(0xFFBD9AA0), Color(0xFFE53935), false),
+    Palette("Sunset Orange", Color(0xFF160E08), Color(0xFF2B1B10), Color(0xFFC9A98F), Color(0xFFFF7043), false),
+    Palette("Purple Nebula", Color(0xFF120A1F), Color(0xFF24163A), Color(0xFFB7A3D6), Color(0xFFB388FF), false),
+    Palette("Midnight Black", Color(0xFF0A0A12), Color(0xFF16161F), Color(0xFF9A9AB0), Color(0xFF7C83FF), false),
+    Palette("Rose Gold", Color(0xFF1C1415), Color(0xFF33242A), Color(0xFFC7A9A9), Color(0xFFE8B4A0), false),
+    Palette("Arctic Ice", Color(0xFFF4FAFF), Color(0xFFE3F1FA), Color(0xFF5B7083), Color(0xFF0288D1), true)
 )
 
 val LocalPalette = staticCompositionLocalOf { Palettes[0] }
@@ -86,10 +99,21 @@ fun fmtDur(s: Long): String {
     return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
 }
 
+fun fixUrl(u: String?): String? = u?.takeIf { it.isNotBlank() }?.let { if (it.startsWith("//")) "https:$it" else it }
+
+/** লোগো না থাকলে (কার্ড/কমেন্ট) চ্যানেল থেকে লোগো এনে দেখায়; না পেলে নামের প্রথম অক্ষর */
+@Composable
+fun ChannelAvatar(avatar: String?, channelUrl: String?, name: String, size: Dp) {
+    val missing = avatar.isNullOrBlank()
+    if (missing && !channelUrl.isNullOrBlank()) LaunchedEffect(channelUrl) { AvatarCache.ensure(channelUrl) }
+    val resolved = if (!missing) avatar else channelUrl?.let { AvatarCache.map[it] }?.takeIf { it.isNotBlank() }
+    Avatar(resolved, name, size)
+}
+
 @Composable
 fun Avatar(url: String?, name: String, size: Dp) {
     Box(Modifier.size(size).clip(CircleShape).background(Chip), Alignment.Center) {
-        if (url != null) AsyncImage(url, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        if (!url.isNullOrBlank()) AsyncImage(fixUrl(url), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         else Text(name.take(1).uppercase(), fontWeight = FontWeight.Bold)
     }
 }
@@ -111,9 +135,12 @@ val LocalVm = staticCompositionLocalOf<MainViewModel?> { null }
 
 @Composable
 fun YtApp(vm: MainViewModel) = CompositionLocalProvider(LocalVm provides vm) {
-    Box(Modifier.fillMaxSize().background(Bg)) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(Bg)) {
         MainScaffold(vm)
         if (vm.channelOpen) ChannelScreen(vm)
+        if (vm.active && !vm.expanded && vm.floatingMini) {
+            FloatingPlayer(vm, constraints.maxWidth.toFloat(), constraints.maxHeight.toFloat())
+        }
         if (vm.expanded && vm.active) PlayerScreen(vm)
         if (vm.opening) LinearProgressIndicator(
             Modifier.fillMaxWidth().statusBarsPadding(), color = YtRed, trackColor = Color.Transparent
@@ -127,10 +154,11 @@ fun MainScaffold(vm: MainViewModel) {
     val focus = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     val tabs = listOf(
-        Triple("হোম", Icons.Outlined.Home, "VidPlay"),
-        Triple("সাবস্ক্রিপশন", Icons.Outlined.Subscriptions, "সাবস্ক্রিপশন"),
-        Triple("লাইব্রেরি", Icons.Outlined.VideoLibrary, "লাইব্রেরি"),
-        Triple("সেটিংস", Icons.Outlined.Settings, "সেটিংস")
+        Triple(L.t("হোম"), Icons.Outlined.Home, "VidPlay"),
+        Triple(L.t("শর্টস"), Icons.Outlined.PlayCircle, L.t("শর্টস")),
+        Triple(L.t("সাবস্ক্রিপশন"), Icons.Outlined.Subscriptions, L.t("সাবস্ক্রিপশন")),
+        Triple(L.t("লাইব্রেরি"), Icons.Outlined.VideoLibrary, L.t("লাইব্রেরি")),
+        Triple(L.t("সেটিংস"), Icons.Outlined.Settings, L.t("সেটিংস"))
     )
     LaunchedEffect(vm.searching) { if (vm.searching) runCatching { focus.requestFocus() } }
     BackHandler(enabled = vm.searching && vm.tab == 0) { vm.closeSearch() }
@@ -144,7 +172,7 @@ fun MainScaffold(vm: MainViewModel) {
                     if (vm.searching && vm.tab == 0) {
                         TextField(
                             value = vm.query, onValueChange = { vm.onQuery(it) },
-                            placeholder = { Text("সার্চ করুন") }, singleLine = true,
+                            placeholder = { Text(L.t("সার্চ করুন")) }, singleLine = true,
                             colors = TextFieldDefaults.colors(
                                 focusedContainerColor = Chip, unfocusedContainerColor = Chip,
                                 focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent
@@ -175,7 +203,7 @@ fun MainScaffold(vm: MainViewModel) {
         },
         bottomBar = {
             Column {
-                if (vm.active && !vm.expanded) MiniPlayer(vm)
+                if (vm.active && !vm.expanded && !vm.floatingMini) MiniPlayer(vm)
                 NavigationBar(containerColor = Bg) {
                     tabs.forEachIndexed { i, (label, icon, _) ->
                         NavigationBarItem(
@@ -191,8 +219,9 @@ fun MainScaffold(vm: MainViewModel) {
         Box(Modifier.padding(pad).fillMaxSize()) {
             when (vm.tab) {
                 0 -> if (vm.searching && vm.showSuggestions) SearchPanel(vm) else HomeTab(vm)
-                1 -> SubsTab(vm)
-                2 -> LibraryTab(vm)
+                1 -> ShortsTab(vm)
+                2 -> SubsTab(vm)
+                3 -> LibraryTab(vm)
                 else -> SettingsTab(vm)
             }
         }
@@ -206,7 +235,7 @@ fun SearchPanel(vm: MainViewModel) {
     val rows = if (showHistory) vm.searchHistory else vm.suggestions
     LazyColumn(Modifier.fillMaxSize()) {
         if (showHistory && rows.isEmpty()) item {
-            Text("কী খুঁজতে চান লিখুন", color = Sub, modifier = Modifier.padding(16.dp))
+            Text(L.t("কী খুঁজতে চান লিখুন"), color = Sub, modifier = Modifier.padding(16.dp))
         }
         items(rows) { r ->
             Row(
@@ -229,7 +258,7 @@ fun SearchPanel(vm: MainViewModel) {
 @Composable
 fun HomeTab(vm: MainViewModel) {
     var chip by remember { mutableStateOf(0) }
-    val chips = listOf("আপনার জন্য", "গান", "গেমিং", "খবর", "লাইভ", "রান্না", "ক্রিকেট")
+    val chips = listOf(L.t("আপনার জন্য"), L.t("গান"), L.t("গেমিং"), L.t("খবর"), L.t("লাইভ"), L.t("রান্না"), L.t("ক্রিকেট"))
     val hist by vm.history.collectAsState()
     val cont = hist.filter { it.durationSec > 0 && it.positionMs > 5_000 && it.positionMs < it.durationSec * 950 }.take(8)
     val on = MaterialTheme.colorScheme.onBackground
@@ -258,7 +287,7 @@ fun HomeTab(vm: MainViewModel) {
         vm.error?.let { Text(it, color = Sub, modifier = Modifier.padding(16.dp)) }
         LazyColumn {
             if (cont.isNotEmpty()) item {
-                Text("দেখা চালিয়ে যান", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(12.dp, 4.dp))
+                Text(L.t("দেখা চালিয়ে যান"), fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(12.dp, 4.dp))
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -284,6 +313,7 @@ fun VideoCard(v: VideoItem, onChannel: () -> Unit = {}, onClick: () -> Unit) {
     val vm = LocalVm.current
     var menu by remember { mutableStateOf(false) }
     var showKw by remember { mutableStateOf(false) }
+    var showWhy by remember { mutableStateOf(false) }
 
     // DeArrow
     val vid = remember(v.url) { DeArrow.videoId(v.url) }
@@ -308,7 +338,11 @@ fun VideoCard(v: VideoItem, onChannel: () -> Unit = {}, onClick: () -> Unit) {
             )
         }
         Row(Modifier.padding(12.dp, 12.dp, 4.dp, 0.dp)) {
-            Box(Modifier.clickable(onClick = onChannel)) { Avatar(null, v.channel, 36.dp) }
+            val subAvatar = vm?.subs?.collectAsState()?.value
+                ?.firstOrNull { it.url == v.channelUrl || it.name == v.channel }?.avatar
+            Box(Modifier.clickable(onClick = onChannel)) {
+                ChannelAvatar(v.channelAvatar ?: subAvatar, v.channelUrl, v.channel, 36.dp)
+            }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 20.sp)
@@ -327,25 +361,37 @@ fun VideoCard(v: VideoItem, onChannel: () -> Unit = {}, onClick: () -> Unit) {
                     Icon(Icons.Filled.MoreVert, null, modifier = Modifier.size(20.dp))
                 }
                 DropdownMenu(menu, { menu = false }) {
-                    DropdownMenuItem(text = { Text("আগ্রহ নেই") }, onClick = { menu = false; vm.notInterested(v) })
+                    if (v.reason != null) DropdownMenuItem(
+                        text = { Text(L.t("কেন সাজেস্ট হলো?")) }, onClick = { menu = false; showWhy = true }
+                    )
+                    DropdownMenuItem(text = { Text(L.t("পরে চালান")) }, onClick = { menu = false; vm.addToQueue(v, true) })
+                    DropdownMenuItem(text = { Text(L.t("কিউতে যোগ")) }, onClick = { menu = false; vm.addToQueue(v, false) })
+                    DropdownMenuItem(text = { Text(L.t("আগ্রহ নেই")) }, onClick = { menu = false; vm.notInterested(v) })
                     if (v.channel.isNotBlank()) DropdownMenuItem(
-                        text = { Text("\"${v.channel}\" চ্যানেল ব্লক") },
+                        text = { Text(L.f("\"{0}\" চ্যানেল ব্লক", v.channel)) },
                         onClick = { menu = false; vm.blockChannel(v.channel) }
                     )
-                    DropdownMenuItem(text = { Text("কিওয়ার্ড ব্লক…") }, onClick = { menu = false; showKw = true })
+                    DropdownMenuItem(text = { Text(L.t("কিওয়ার্ড ব্লক…")) }, onClick = { menu = false; showKw = true })
                 }
             }
         }
     }
 
+    if (showWhy) AlertDialog(
+        onDismissRequest = { showWhy = false },
+        title = { Text(L.t("কেন সাজেস্ট হলো?")) },
+        text = { Text(v.reason ?: "") },
+        confirmButton = { TextButton(onClick = { showWhy = false }) { Text(L.t("ঠিক আছে")) } }
+    )
+
     if (showKw && vm != null) {
         var kw by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { showKw = false },
-            title = { Text("কিওয়ার্ড ব্লক") },
+            title = { Text(L.t("কিওয়ার্ড ব্লক")) },
             text = {
                 Column {
-                    Text("যে ভিডিওর টাইটেলে এই শব্দ থাকবে সেগুলো আর দেখাবে না।", color = Sub, fontSize = 12.sp)
+                    Text(L.t("যে ভিডিওর টাইটেলে এই শব্দ থাকবে সেগুলো আর দেখাবে না।"), color = Sub, fontSize = 12.sp)
                     OutlinedTextField(kw, { kw = it }, singleLine = true, modifier = Modifier.padding(top = 8.dp))
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 8.dp)) {
                         items(Recommender.keywords(v.title)) { w ->
@@ -359,9 +405,9 @@ fun VideoCard(v: VideoItem, onChannel: () -> Unit = {}, onClick: () -> Unit) {
                 }
             },
             confirmButton = {
-                TextButton(enabled = kw.isNotBlank(), onClick = { vm.blockKeyword(kw); showKw = false }) { Text("ব্লক করুন") }
+                TextButton(enabled = kw.isNotBlank(), onClick = { vm.blockKeyword(kw); showKw = false }) { Text(L.t("ব্লক করুন")) }
             },
-            dismissButton = { TextButton(onClick = { showKw = false }) { Text("বাতিল") } }
+            dismissButton = { TextButton(onClick = { showKw = false }) { Text(L.t("বাতিল")) } }
         )
     }
 }
@@ -392,4 +438,90 @@ fun MiniPlayer(vm: MainViewModel) {
 fun fmtTime(s: Long): String {
     val h = s / 3600; val m = (s % 3600) / 60; val sec = s % 60
     return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
+}
+
+// ---------- ভাসমান মিনি প্লেয়ার (PiP-এর মতো) ----------
+/** ব্যাক করলে ভিডিও ছোট ভাসমান উইন্ডোতে চলে। টেনে সরানো যায়, ছাড়লে পাশে লেগে যায়। ট্যাপ = কন্ট্রোল, ডবল ট্যাপ = বড় করা। */
+@Composable
+fun FloatingPlayer(vm: MainViewModel, cw: Float, ch: Float) {
+    val density = LocalDensity.current
+    val margin = with(density) { 12.dp.toPx() }
+    val bottomInset = with(density) { 92.dp.toPx() }          // নেভিগেশন বারের উপরে
+    val w = (cw * 0.55f).coerceIn(with(density) { 160.dp.toPx() }, with(density) { 260.dp.toPx() })
+    val h = w * 9f / 16f
+    val defaultX = cw - w - margin
+    val defaultY = ch - h - bottomInset
+    val x = if (vm.pipX.isNaN()) defaultX else vm.pipX.coerceIn(0f, (cw - w).coerceAtLeast(0f))
+    val y = if (vm.pipY.isNaN()) defaultY else vm.pipY.coerceIn(0f, (ch - h).coerceAtLeast(0f))
+
+    var controls by remember { mutableStateOf(true) }
+    LaunchedEffect(controls, vm.isPlaying) {
+        if (controls && vm.isPlaying) { delay(3000); controls = false }
+    }
+    val frac = if (vm.durationMs > 0) (vm.positionMs.toFloat() / vm.durationMs).coerceIn(0f, 1f) else 0f
+
+    Box(
+        Modifier
+            .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
+            .size(with(density) { w.toDp() }, with(density) { h.toDp() })
+            .shadow(10.dp, RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.Black)
+    ) {
+        AndroidView(
+            factory = { c -> PlayerView(c).apply { player = vm.player; useController = false } },
+            modifier = Modifier.fillMaxSize()
+        )
+        if (vm.audioOnly && vm.current != null) AsyncImage(
+            vm.current?.thumbnails?.lastOrNull()?.url, null, Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop, alpha = 0.6f
+        )
+
+        // জেসচার স্তর: ট্যাপ, ডবল ট্যাপ, টেনে সরানো
+        Box(
+            Modifier.matchParentSize()
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = { controls = !controls }, onDoubleTap = { vm.expand() })
+                }
+                .pointerInput(cw, ch, w, h) {
+                    detectDragGestures(
+                        onDragEnd = {
+                            val cx = if (vm.pipX.isNaN()) defaultX else vm.pipX
+                            vm.pipX = if (cx + w / 2 < cw / 2) margin else cw - w - margin
+                        },
+                        onDrag = { change, drag ->
+                            change.consume()
+                            val cx = if (vm.pipX.isNaN()) defaultX else vm.pipX
+                            val cy = if (vm.pipY.isNaN()) defaultY else vm.pipY
+                            vm.pipX = (cx + drag.x).coerceIn(0f, (cw - w).coerceAtLeast(0f))
+                            vm.pipY = (cy + drag.y).coerceIn(0f, (ch - h).coerceAtLeast(0f))
+                        }
+                    )
+                }
+        )
+
+        if (controls) Box(Modifier.matchParentSize().background(Color(0x55000000))) {
+            IconButton(onClick = { vm.expand() }, modifier = Modifier.align(Alignment.TopStart).size(36.dp)) {
+                Icon(Icons.Filled.Fullscreen, null, tint = Color.White)
+            }
+            IconButton(onClick = { vm.close() }, modifier = Modifier.align(Alignment.TopEnd).size(36.dp)) {
+                Icon(Icons.Filled.Close, null, tint = Color.White)
+            }
+            IconButton(
+                onClick = { if (vm.isPlaying) vm.player.pause() else vm.player.play() },
+                modifier = Modifier.align(Alignment.Center).size(48.dp)
+            ) {
+                Icon(
+                    if (vm.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, null,
+                    tint = Color.White, modifier = Modifier.size(32.dp)
+                )
+            }
+        }
+
+        LinearProgressIndicator(
+            progress = { frac },
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp),
+            color = YtRed, trackColor = Color(0x55FFFFFF)
+        )
+    }
 }

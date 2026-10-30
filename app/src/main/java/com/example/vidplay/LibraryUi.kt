@@ -37,10 +37,15 @@ fun SubsTab(vm: MainViewModel) {
     LaunchedEffect(subs.map { it.url }) { vm.loadSubsFeed() }
 
     if (subs.isEmpty()) {
-        Box(Modifier.fillMaxSize(), Alignment.Center) { Text("এখনো কোনো চ্যানেল সাবস্ক্রাইব করেননি", color = Sub) }
+        Box(Modifier.fillMaxSize(), Alignment.Center) { Text(L.t("এখনো কোনো চ্যানেল সাবস্ক্রাইব করেননি"), color = Sub) }
         return
     }
     LazyColumn {
+        item {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = { vm.loadSubsFeed(true) }) { Text(L.t("রিফ্রেশ")) }
+            }
+        }
         item {
             LazyRow(contentPadding = PaddingValues(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(subs) { s ->
@@ -71,7 +76,7 @@ fun LibraryTab(vm: MainViewModel) {
         LazyRow(
             contentPadding = PaddingValues(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            val names = listOf("ইতিহাস", "ফেভারিট", "প্লেলিস্ট", "ডাউনলোড")
+            val names = listOf(L.t("ইতিহাস"), L.t("ফেভারিট"), L.t("প্লেলিস্ট"), L.t("ডাউনলোড"))
             items(names.size) { i ->
                 val sel = sub == i
                 Text(
@@ -115,7 +120,7 @@ private fun MediaRow(
 private fun HistoryList(vm: MainViewModel) {
     val list by vm.history.collectAsState()
     if (list.isEmpty()) {
-        Box(Modifier.fillMaxSize(), Alignment.Center) { Text("ইতিহাস খালি", color = Sub) }
+        Box(Modifier.fillMaxSize(), Alignment.Center) { Text(L.t("ইতিহাস খালি"), color = Sub) }
         return
     }
     LazyColumn {
@@ -138,13 +143,13 @@ private fun HistoryList(vm: MainViewModel) {
 private fun FavoriteList(vm: MainViewModel) {
     val list by vm.favorites.collectAsState()
     if (list.isEmpty()) {
-        Box(Modifier.fillMaxSize(), Alignment.Center) { Text("কোনো ফেভারিট নেই", color = Sub) }
+        Box(Modifier.fillMaxSize(), Alignment.Center) { Text(L.t("কোনো ফেভারিট নেই"), color = Sub) }
         return
     }
     LazyColumn {
         items(list.size, key = { list[it].url }) { i ->
             val f = list[i]
-            MediaRow(f.title, f.channel, f.thumb, onClick = { vm.playQueue(list.map { it.url }, i) })
+            MediaRow(f.title, f.channel, f.thumb, onClick = { vm.playQueueItems(list.map { QItem(it.url, it.title, it.channel, it.thumb) }, i) })
         }
     }
 }
@@ -165,13 +170,13 @@ private fun PlaylistSection(vm: MainViewModel) {
         Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
                 value = newName, onValueChange = { newName = it }, singleLine = true,
-                label = { Text("নতুন প্লেলিস্ট") }, modifier = Modifier.weight(1f)
+                label = { Text(L.t("নতুন প্লেলিস্ট")) }, modifier = Modifier.weight(1f)
             )
             Spacer(Modifier.width(8.dp))
-            Button(enabled = newName.isNotBlank(), onClick = { vm.createPlaylist(newName); newName = "" }) { Text("তৈরি") }
+            Button(enabled = newName.isNotBlank(), onClick = { vm.createPlaylist(newName); newName = "" }) { Text(L.t("তৈরি")) }
         }
         if (lists.isEmpty()) Box(Modifier.fillMaxWidth().padding(32.dp), Alignment.Center) {
-            Text("কোনো প্লেলিস্ট নেই", color = Sub)
+            Text(L.t("কোনো প্লেলিস্ট নেই"), color = Sub)
         }
         LazyColumn {
             items(lists, key = { it.id }) { p ->
@@ -181,7 +186,7 @@ private fun PlaylistSection(vm: MainViewModel) {
                 ) {
                     Column(Modifier.weight(1f)) {
                         Text(p.name, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                        Text("${p.itemCount} টি ভিডিও", color = Sub, fontSize = 12.sp)
+                        Text(L.f("{0} টি ভিডিও", p.itemCount), color = Sub, fontSize = 12.sp)
                     }
                     IconButton(onClick = { vm.deletePlaylist(p.id) }) { Icon(Icons.Filled.Delete, null) }
                 }
@@ -200,19 +205,23 @@ private fun PlaylistDetail(vm: MainViewModel, p: PlaylistRow, onBack: () -> Unit
             Text(p.name, fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.weight(1f), maxLines = 1)
             Button(
                 enabled = entries.isNotEmpty(),
-                onClick = { vm.playQueue(entries.map { it.url }, 0) },
+                onClick = { vm.playQueueItems(entries.map { QItem(it.url, it.title, it.channel, it.thumb) }, 0) },
                 modifier = Modifier.padding(end = 12.dp)
-            ) { Text("সব চালান") }
+            ) { Text(L.t("সব চালান")) }
+            TextButton(
+                enabled = entries.isNotEmpty(),
+                onClick = { vm.playQueueItems(entries.map { QItem(it.url, it.title, it.channel, it.thumb) }, 0, shuffleStart = true) }
+            ) { Text(L.t("শাফল")) }
         }
         if (entries.isEmpty()) Box(Modifier.fillMaxWidth().padding(32.dp), Alignment.Center) {
-            Text("প্লেলিস্ট খালি — ভিডিও পেজ থেকে যোগ করুন", color = Sub)
+            Text(L.t("প্লেলিস্ট খালি — ভিডিও পেজ থেকে যোগ করুন"), color = Sub)
         }
         LazyColumn {
             items(entries.size, key = { entries[it].id }) { i ->
                 val e = entries[i]
                 MediaRow(
                     e.title, e.channel, e.thumb,
-                    onClick = { vm.playQueue(entries.map { it.url }, i) },
+                    onClick = { vm.playQueueItems(entries.map { QItem(it.url, it.title, it.channel, it.thumb) }, i) },
                     trailing = { IconButton(onClick = { vm.removeFromPlaylist(e.id) }) { Icon(Icons.Filled.Close, null) } }
                 )
             }
@@ -225,13 +234,13 @@ private fun PlaylistDetail(vm: MainViewModel, p: PlaylistRow, onBack: () -> Unit
 private fun DownloadList(vm: MainViewModel) {
     val list by vm.downloads.collectAsState()
     if (list.isEmpty()) {
-        Box(Modifier.fillMaxSize(), Alignment.Center) { Text("কোনো ডাউনলোড নেই", color = Sub) }
+        Box(Modifier.fillMaxSize(), Alignment.Center) { Text(L.t("কোনো ডাউনলোড নেই"), color = Sub) }
         return
     }
     Column {
         Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { vm.pauseAllDownloads() }) { Text("সব থামান") }
-            OutlinedButton(onClick = { vm.resumeAllDownloads() }) { Text("সব শুরু করুন") }
+            OutlinedButton(onClick = { vm.pauseAllDownloads() }) { Text(L.t("সব থামান")) }
+            OutlinedButton(onClick = { vm.resumeAllDownloads() }) { Text(L.t("সব শুরু করুন")) }
         }
         LazyColumn { items(list, key = { it.id }) { d -> DownloadRow(vm, d) } }
     }
@@ -240,14 +249,14 @@ private fun DownloadList(vm: MainViewModel) {
 @Composable
 private fun DownloadRow(vm: MainViewModel, d: DownloadEntity) {
     val done = d.state == 3 && File(d.path).exists()
-    val kind = if (d.audioOnly) "অডিও" else if (d.height > 0) "${d.height}p" else "ভিডিও"
+    val kind = if (d.audioOnly) L.t("অডিও") else if (d.height > 0) "${d.height}p" else L.t("ভিডিও")
     val status = when (d.state) {
-        0 -> "কিউতে অপেক্ষায়"
-        1 -> "ডাউনলোড হচ্ছে ${d.progress / 10}%"
-        2 -> "থামানো (${d.progress / 10}%)"
-        3 -> if (done) "সম্পন্ন" else "ফাইল পাওয়া যায়নি"
-        5 -> "মার্জ হচ্ছে…"
-        else -> "ব্যর্থ — আবার চেষ্টা করুন"
+        0 -> L.t("কিউতে অপেক্ষায়")
+        1 -> L.f("ডাউনলোড হচ্ছে {0}%", d.progress / 10)
+        2 -> L.f("থামানো ({0}%)", d.progress / 10)
+        3 -> if (done) L.t("সম্পন্ন") else L.t("ফাইল পাওয়া যায়নি")
+        5 -> L.t("মার্জ হচ্ছে…")
+        else -> L.t("ব্যর্থ — আবার চেষ্টা করুন")
     }
     Row(
         Modifier.fillMaxWidth().clickable(enabled = done) { vm.playLocal(d) }.padding(12.dp),

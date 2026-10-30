@@ -25,7 +25,7 @@ class DownloadService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Notif.ensureChannels(this)
         ServiceCompat.startForeground(
-            this, NOTIF_ID, build("ডাউনলোড চলছে", -1), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            this, NOTIF_ID, build(L.t("ডাউনলোড চলছে"), -1), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
         )
         if (!collecting) {
             collecting = true
@@ -54,7 +54,7 @@ class DownloadService : Service() {
         )
         val b = NotificationCompat.Builder(this, Notif.CH_DL)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("ডাউনলোড")
+            .setContentTitle(L.t("ডাউনলোড"))
             .setContentText(text)
             .setOngoing(true).setOnlyAlertOnce(true)
             .setContentIntent(pi)

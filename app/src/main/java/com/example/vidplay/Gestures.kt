@@ -58,7 +58,7 @@ class PlayerGestures(
         override fun onDoubleTap(e: MotionEvent): Boolean {
             val forward = e.x > pv.width / 2f
             seekBy(if (forward) 10_000L else -10_000L)
-            onHud(if (forward) "⏩ +10 সে" else "⏪ -10 সে")
+            onHud(if (forward) L.t("⏩ +10 সে") else L.t("⏪ -10 সে"))
             clearHudLater()
             return true
         }
@@ -87,7 +87,7 @@ class PlayerGestures(
                     val dur = player.duration
                     seekTarget = (startPos + delta).coerceIn(0L, if (dur > 0) dur else Long.MAX_VALUE)
                     val sec = (seekTarget - startPos) / 1000
-                    onHud((if (sec >= 0) "⏩ +" else "⏪ ") + sec + " সে")
+                    onHud((if (sec >= 0) "⏩ +" else "⏪ ") + sec + L.t(" সে"))
                 }
                 2 -> {
                     val v = (startValue + dy / h).coerceIn(0.02f, 1f)

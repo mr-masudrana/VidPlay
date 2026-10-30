@@ -28,8 +28,8 @@ object Notif {
     fun ensureChannels(ctx: Context) {
         if (Build.VERSION.SDK_INT < 26) return
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.createNotificationChannel(NotificationChannel(CH_DL, "ডাউনলোড", NotificationManager.IMPORTANCE_LOW))
-        nm.createNotificationChannel(NotificationChannel(CH_NEW, "নতুন ভিডিও", NotificationManager.IMPORTANCE_DEFAULT))
+        nm.createNotificationChannel(NotificationChannel(CH_DL, L.t("ডাউনলোড"), NotificationManager.IMPORTANCE_LOW))
+        nm.createNotificationChannel(NotificationChannel(CH_NEW, L.t("নতুন ভিডিও"), NotificationManager.IMPORTANCE_DEFAULT))
     }
 
     @SuppressLint("MissingPermission")
@@ -56,7 +56,7 @@ object Notif {
         if (total > 1) {
             val summary = NotificationCompat.Builder(ctx, CH_NEW)
                 .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle("$total টি নতুন ভিডিও")
+                .setContentTitle(L.f("{0} টি নতুন ভিডিও", total))
                 .setGroup("new_videos").setGroupSummary(true).setAutoCancel(true).build()
             nm.notify(7001, summary)
         }

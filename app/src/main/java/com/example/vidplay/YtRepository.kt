@@ -12,8 +12,13 @@ import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.schabi.newpipe.extractor.MediaFormat
+import org.schabi.newpipe.extractor.Page
+import org.schabi.newpipe.extractor.comments.CommentsInfoItem
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.channel.ChannelInfo
 import org.schabi.newpipe.extractor.channel.tabs.ChannelTabInfo
@@ -31,7 +36,9 @@ data class VideoItem(
     val views: Long,
     val durationSec: Long,
     val thumb: String?,
-    val uploaded: String?
+    val uploaded: String?,
+    val reason: String? = null,
+    val channelAvatar: String? = null
 )
 
 data class ChannelData(
@@ -40,13 +47,17 @@ data class ChannelData(
 )
 
 data class CommentItem(
-    val author: String, val text: String, val likes: String, val date: String, val avatar: String?
+    val id: String, val author: String, val authorUrl: String?, val text: String, val likes: String,
+    val date: String, val avatar: String?, val replyCount: Int, val replies: Page?, val time: Long?
 )
+
+data class CommentPage(val items: List<CommentItem>, val next: Page?)
 
 private fun StreamInfoItem.toVideo() = VideoItem(
     title = name, url = url, channel = uploaderName ?: "", channelUrl = uploaderUrl,
     views = viewCount, durationSec = duration,
-    thumb = thumbnails.lastOrNull()?.url, uploaded = textualUploadDate
+    thumb = thumbnails.lastOrNull()?.url, uploaded = textualUploadDate,
+    channelAvatar = uploaderAvatars.lastOrNull()?.url
 )
 
 object YtRepository {
@@ -77,7 +88,15 @@ object YtRepository {
         val info = ChannelInfo.getInfo(yt, url)
         val tab = info.tabs.firstOrNull { it.contentFilters.contains(ChannelTabs.VIDEOS) }
         val videos = tab?.let {
-            ChannelTabInfo.getInfo(yt, it).relatedItems.filterIsInstance<StreamInfoItem>().map { v -> v.toVideo() }
+            ChannelTabInfo.getInfo(yt, it).relatedItems.filterIsInstance<StreamInfoItem>().map { v ->
+                v.toVideo().let { x ->
+                    x.copy(
+                        channelAvatar = x.channelAvatar ?: info.avatars.lastOrNull()?.url,
+                        channelUrl = x.channelUrl ?: info.url,
+                        channel = x.channel.ifBlank { info.name }
+                    )
+                }
+            }
         } ?: emptyList()
         ChannelData(
             url = info.url, name = info.name,
@@ -86,18 +105,35 @@ object YtRepository {
         )
     }
 
-    // ---------- মন্তব্য (প্রথম পেজ) ----------
-    suspend fun comments(url: String): Pair<Int, List<CommentItem>> = withContext(Dispatchers.IO) {
+    // ---------- মন্তব্য (পেজ করে) ----------
+    suspend fun comments(url: String): CommentPage = withContext(Dispatchers.IO) {
         val ci = CommentsInfo.getInfo(yt, url)
-        0 to ci.relatedItems.map {   // মোট সংখ্যা এই ভার্সনে নেই
-            CommentItem(
-                author = it.uploaderName ?: "",
-                text = it.commentText?.content ?: "",
-                likes = it.textualLikeCount ?: "",
-                date = it.textualUploadDate ?: "",
-                avatar = it.uploaderAvatars.lastOrNull()?.url
-            )
-        }
+        CommentPage(ci.relatedItems.map { it.toComment() }, ci.nextPage)
+    }
+
+    /** পরের পেজ অথবা কোনো মন্তব্যের উত্তরের পেজ */
+    suspend fun moreComments(url: String, page: Page): CommentPage = withContext(Dispatchers.IO) {
+        val p = CommentsInfo.getMoreItems(yt, url, page)
+        CommentPage(p.items.map { it.toComment() }, p.nextPage)
+    }
+
+    private fun CommentsInfoItem.toComment() = CommentItem(
+        id = commentId ?: "",
+        author = uploaderName ?: "",
+        authorUrl = uploaderUrl,
+        text = commentText?.content ?: "",
+        likes = textualLikeCount ?: "",
+        date = textualUploadDate ?: "",
+        avatar = uploaderAvatars.lastOrNull()?.url,
+        replyCount = replyCount,
+        replies = replies,
+        time = uploadDate?.offsetDateTime()?.toInstant()?.toEpochMilli()
+    )
+
+    /** শর্টস: সার্চ ফলাফল থেকে ৭০ সেকেন্ড বা তার কম দৈর্ঘ্যের ভিডিও */
+    suspend fun shorts(queries: List<String>): List<VideoItem> = coroutineScope {
+        queries.map { q -> async { runCatching { search("$q #shorts") }.getOrDefault(emptyList()) } }
+            .awaitAll().flatten().filter { it.durationSec in 1..70 }.distinctBy { it.url }
     }
 
     suspend fun suggestions(q: String): List<String> = withContext(Dispatchers.IO) {
@@ -152,7 +188,7 @@ object YtRepository {
         }
         val muxed = info.videoStreams.filter { it.height <= maxHeight }.maxByOrNull { it.height }
             ?: info.videoStreams.maxByOrNull { it.height }
-            ?: error("কোনো প্লে করার মতো স্ট্রিম পাওয়া যায়নি")
+            ?: error(L.t("কোনো প্লে করার মতো স্ট্রিম পাওয়া যায়নি"))
         return progressive.createMediaSource(MediaItem.fromUri(muxed.content))
     }
 

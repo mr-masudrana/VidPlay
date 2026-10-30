@@ -70,4 +70,24 @@ class Prefs(ctx: Context) {
     var dearrowThumbs: Boolean
         get() = sp.getBoolean("dearrowThumbs", true)
         set(v) { sp.edit().putBoolean("dearrowThumbs", v).apply() }
+
+    /** সাবটাইটেলের রঙ: 0 সাদা, 1 হলুদ, 2 সবুজ, 3 নীল */
+    var captionColor: Int
+        get() = sp.getInt("captionColor", 0)
+        set(v) { sp.edit().putInt("captionColor", v).apply() }
+
+    /** ব্যাকগ্রাউন্ড: 0 নেই (আউটলাইন), 1 আধা-স্বচ্ছ, 2 কালো */
+    var captionBg: Int
+        get() = sp.getInt("captionBg", 1)
+        set(v) { sp.edit().putInt("captionBg", v).apply() }
+
+    /** ভাষা: 0 বাংলা, 1 English, 2 সিস্টেম */
+    var lang: Int
+        get() = sp.getInt("lang", 0)
+        set(v) { sp.edit().putInt("lang", v).apply() }
+
+    /** ব্যাক করলে ভাসমান (PiP-এর মতো) মিনি প্লেয়ার; বন্ধ থাকলে নিচের বারে */
+    var floatMini: Boolean
+        get() = sp.getBoolean("floatMini", true)
+        set(v) { sp.edit().putBoolean("floatMini", v).apply() }
 }

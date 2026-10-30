@@ -103,15 +103,15 @@ object DownloadEngine {
 
             if (d.audioOnly) {
                 val a = info.audioStreams.firstOrNull { it.itag == d.audioItag }
-                    ?: info.audioStreams.maxByOrNull { it.averageBitrate } ?: error("অডিও স্ট্রিম পাওয়া যায়নি")
+                    ?: info.audioStreams.maxByOrNull { it.averageBitrate } ?: error(L.t("অডিও স্ট্রিম পাওয়া যায়নি"))
                 val part = File(d.path + ".part")
                 fetch(a.content, part) { h, t -> report(frac(h, t)) }
                 finish(part, final)
             } else if (d.audioItag != 0) {
                 val v = (info.videoOnlyStreams + info.videoStreams).firstOrNull { it.itag == d.videoItag }
-                    ?: info.videoOnlyStreams.firstOrNull { it.height == d.height } ?: error("ভিডিও স্ট্রিম পাওয়া যায়নি")
+                    ?: info.videoOnlyStreams.firstOrNull { it.height == d.height } ?: error(L.t("ভিডিও স্ট্রিম পাওয়া যায়নি"))
                 val a = info.audioStreams.firstOrNull { it.itag == d.audioItag }
-                    ?: info.audioStreams.maxByOrNull { it.averageBitrate } ?: error("অডিও স্ট্রিম পাওয়া যায়নি")
+                    ?: info.audioStreams.maxByOrNull { it.averageBitrate } ?: error(L.t("অডিও স্ট্রিম পাওয়া যায়নি"))
                 val vp = File(d.path + ".v.part")
                 val ap = File(d.path + ".a.part")
                 fetch(v.content, vp) { h, t -> report(0.92f * frac(h, t)) }
@@ -121,12 +121,12 @@ object DownloadEngine {
                 status.value = d.title to 100
                 val tmp = File(d.path + ".tmp")
                 tmp.delete()
-                Muxer.mux(vp, ap, tmp)
+                Muxer.mux(vp, ap, tmp, d.path.endsWith(".webm"))
                 finish(tmp, final)
                 vp.delete(); ap.delete()
             } else {
                 val v = info.videoStreams.firstOrNull { it.itag == d.videoItag }
-                    ?: info.videoStreams.firstOrNull { it.height == d.height } ?: error("ভিডিও স্ট্রিম পাওয়া যায়নি")
+                    ?: info.videoStreams.firstOrNull { it.height == d.height } ?: error(L.t("ভিডিও স্ট্রিম পাওয়া যায়নি"))
                 val part = File(d.path + ".part")
                 fetch(v.content, part) { h, t -> report(frac(h, t)) }
                 finish(part, final)
@@ -157,13 +157,13 @@ object DownloadEngine {
                 when (resp.code) {
                     416 -> total = have
                     200, 206 -> {
-                        val body = resp.body ?: throw IOException("খালি উত্তর")
+                        val body = resp.body ?: throw IOException(L.t("খালি উত্তর"))
                         if (resp.code == 200) {          // সার্ভার রেঞ্জ মানেনি: গোড়া থেকে
                             have = 0
                             total = body.contentLength()
                         } else {
                             total = resp.header("Content-Range")?.substringAfter('/')?.toLongOrNull()
-                                ?: throw IOException("ফাইলের সাইজ জানা যায়নি")
+                                ?: throw IOException(L.t("ফাইলের সাইজ জানা যায়নি"))
                         }
                         FileOutputStream(file, resp.code == 206).use { out ->
                             val src = body.byteStream()
@@ -183,7 +183,7 @@ object DownloadEngine {
                 }
                 Unit
             }
-            if (have == before && (total < 0 || have < total)) throw IOException("ডাউনলোড আটকে গেছে")
+            if (have == before && (total < 0 || have < total)) throw IOException(L.t("ডাউনলোড আটকে গেছে"))
         }
     }
 }

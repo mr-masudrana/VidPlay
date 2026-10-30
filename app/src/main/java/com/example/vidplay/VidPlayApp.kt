@@ -9,8 +9,9 @@ class VidPlayApp : Application() {
     override fun onCreate() {
         super.onCreate()
         NewPipe.init(MyDownloader.create(), Localization("bn", "BD"), ContentCountry("BD"))
-        Notif.ensureChannels(this)
         val p = Prefs(this)
+        L.apply(p.lang)
+        Notif.ensureChannels(this)
         NotifyScheduler.apply(this, p.notifyEnabled, p.notifyHours, replace = false)
     }
 }

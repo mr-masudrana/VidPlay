@@ -8,7 +8,8 @@ import java.io.File
 
 data class DlOption(
     val label: String, val note: String,
-    val height: Int, val videoItag: Int, val audioItag: Int, val audioOnly: Boolean
+    val height: Int, val videoItag: Int, val audioItag: Int, val audioOnly: Boolean,
+    val webm: Boolean = false
 )
 
 object Downloads {
@@ -25,27 +26,39 @@ object Downloads {
                 .map { (h, list) -> h to list.first() }
                 .sortedByDescending { it.first }
                 .forEach { (h, v) ->
-                    out += DlOption("${h}p", "ভিডিও + অডিও মার্জ", h, v.itag, audio.itag, false)
+                    out += DlOption("${h}p", L.t("ভিডিও + অডিও মার্জ"), h, v.itag, audio.itag, false)
+                }
+        }
+        // VP9 + Opus (WebM): যে রেজোলিউশনে H.264 নেই (যেমন 1440p/4K)
+        val opus = info.audioStreams.filter { it.format == MediaFormat.WEBMA_OPUS }.maxByOrNull { it.averageBitrate }
+        if (opus != null) {
+            val have = out.map { it.height }.toSet()
+            info.videoOnlyStreams
+                .filter { it.format == MediaFormat.WEBM && (it.codec?.startsWith("vp9") == true || it.codec?.startsWith("vp09") == true) }
+                .groupBy { it.height }
+                .map { (h, list) -> h to list.first() }
+                .forEach { (h, v) ->
+                    if (h !in have) out += DlOption("${h}p VP9", L.t("WebM • ভিডিও + অডিও মার্জ"), h, v.itag, opus.itag, false, webm = true)
                 }
         }
         info.videoStreams.sortedByDescending { it.height }.forEach { v ->
-            if (out.none { it.height == v.height }) out += DlOption("${v.height}p", "সরাসরি (মার্জ ছাড়া)", v.height, v.itag, 0, false)
+            if (out.none { it.height == v.height }) out += DlOption("${v.height}p", L.t("সরাসরি (মার্জ ছাড়া)"), v.height, v.itag, 0, false)
         }
         (audio ?: info.audioStreams.maxByOrNull { it.averageBitrate })?.let {
-            out += DlOption("শুধু অডিও", "m4a", 0, 0, it.itag, true)
+            out += DlOption(L.t("শুধু অডিও"), "m4a", 0, 0, it.itag, true)
         }
-        return out
+        return out.sortedWith(compareBy<DlOption> { it.audioOnly }.thenByDescending { it.height })
     }
 
     suspend fun enqueue(ctx: Context, dao: AppDao, info: StreamInfo, o: DlOption) {
         val dir = ctx.getExternalFilesDir(Environment.DIRECTORY_MOVIES)!!
         val safe = info.name.replace(Regex("[^\\p{L}\\p{N} _-]"), "").trim().take(50).ifBlank { "video" }
         val tag = if (o.audioOnly) "audio" else "${o.height}p"
-        val ext = if (o.audioOnly) "m4a" else "mp4"
+        val ext = if (o.audioOnly) "m4a" else if (o.webm) "webm" else "mp4"
         val path = File(dir, "${safe}_${info.id}_$tag.$ext").absolutePath
 
         val existing = dao.downloadByPath(path)
-        require(existing == null || existing.state == 4) { "এটি আগে থেকেই ডাউনলোড তালিকায় আছে" }
+        require(existing == null || existing.state == 4) { L.t("এটি আগে থেকেই ডাউনলোড তালিকায় আছে") }
         if (existing != null) dao.removeDownload(existing)
 
         dao.addDownload(
