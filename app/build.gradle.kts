@@ -5,20 +5,37 @@ plugins {
 }
 
 android {
-    namespace = "com.example.vidplay"
+    namespace = "com.tubex.app"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.vidplay"
+        applicationId = "com.tubex.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
+    }
+
+    // রিলিজ সাইনিং: কীস্টোর পরিবেশ ভেরিয়েবল থেকে আসে (নিচে .github/workflows/release.yml দেখুন)।
+    // কীস্টোর না থাকলে রিলিজ APK আনসাইনড বানানো হয়।
+    val keystorePath: String? = System.getenv("KEYSTORE_PATH")
+    signingConfigs {
+        if (keystorePath != null && file(keystorePath).exists()) {
+            create("release") {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 
@@ -44,7 +61,7 @@ dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.0.4")
 
     // YouTube ঘন ঘন বদলায়: ভিডিও না চললে প্রথমে এই ভার্সন আপডেট করুন
-    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.4")
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.5")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.work:work-runtime-ktx:2.9.1")
 
@@ -69,4 +86,7 @@ dependencies {
     implementation("com.google.android.gms:play-services-cast-framework:21.5.0")
     implementation("androidx.mediarouter:mediarouter:1.7.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("androidx.core:core-splashscreen:1.0.1")
+
+    testImplementation("junit:junit:4.13.2")
 }

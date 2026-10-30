@@ -13,5 +13,5 @@ dependencyResolutionManagement {
         maven("https://jitpack.io")
     }
 }
-rootProject.name = "VidPlay"
+rootProject.name = "TubeX"
 include(":app")

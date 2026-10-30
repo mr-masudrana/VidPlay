@@ -1,0 +1,14 @@
+<resources>
+    <style name="Theme.TubeX" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">#0F0F0F</item>
+        <item name="android:statusBarColor">#0F0F0F</item>
+        <item name="android:navigationBarColor">#0F0F0F</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <style name="Theme.TubeX.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#0F0F0F</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>
+        <item name="postSplashScreenTheme">@style/Theme.TubeX</item>
+    </style>
+</resources>
