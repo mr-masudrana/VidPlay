@@ -25,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -63,10 +64,14 @@ fun PlayerScreen(vm: MainViewModel) {
 
     BackHandler { if (landscape) toggleFullscreen() else vm.minimize() }
 
+    val themeBg = Bg.toArgb()
+    val themeLight = LocalPalette.current.light
+
     // ফুলস্ক্রিন = ল্যান্ডস্কেপ: সিস্টেম বার লুকানো
     LaunchedEffect(landscape) {
         val win = activity?.window ?: return@LaunchedEffect
         val c = WindowCompat.getInsetsController(win, view)
+        setFullscreenWindow(win, view, landscape, themeBg, themeLight)
         if (landscape) {
             c.hide(WindowInsetsCompat.Type.systemBars())
             c.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -78,6 +83,7 @@ fun PlayerScreen(vm: MainViewModel) {
     DisposableEffect(Unit) {
         onDispose {
             activity?.let {
+                setFullscreenWindow(it.window, view, false, themeBg, themeLight)
                 it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                 WindowCompat.getInsetsController(it.window, view).show(WindowInsetsCompat.Type.systemBars())
             }
@@ -99,6 +105,31 @@ fun PlayerScreen(vm: MainViewModel) {
     }
 }
 
+/**
+ * ফুলস্ক্রিন (ল্যান্ডস্কেপ): সত্যিকারের edge-to-edge। উইন্ডো, স্ট্যাটাস ও নেভিগেশন বার কালো,
+ * ভিডিও নচ/কাটআউট পর্যন্ত আঁকা হয়, তাই কোনো পাশে থিমের রঙ (সাদা) দেখা যায় না।
+ * বের হলে সব আগের (থিমের) অবস্থায় ফেরে।
+ */
+private fun setFullscreenWindow(win: android.view.Window, view: View, full: Boolean, themeBg: Int, themeLight: Boolean) {
+    val black = android.graphics.Color.BLACK
+    val color = if (full) black else themeBg
+    WindowCompat.setDecorFitsSystemWindows(win, !full)
+    win.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(color))
+    win.statusBarColor = color
+    win.navigationBarColor = color
+    val c = WindowCompat.getInsetsController(win, view)
+    c.isAppearanceLightStatusBars = !full && themeLight
+    c.isAppearanceLightNavigationBars = !full && themeLight
+    if (android.os.Build.VERSION.SDK_INT >= 29) win.isNavigationBarContrastEnforced = !full
+    if (android.os.Build.VERSION.SDK_INT >= 28) {
+        val a = win.attributes
+        a.layoutInDisplayCutoutMode = if (full)
+            android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        else android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
+        win.attributes = a
+    }
+}
+
 @Composable
 private fun PlayerBox(
     vm: MainViewModel, landscape: Boolean, overlay: Boolean,
@@ -110,6 +141,8 @@ private fun PlayerBox(
     var showCaptions by remember { mutableStateOf(false) }
     var hud by remember { mutableStateOf<String?>(null) }
     val sizes = floatArrayOf(0.04f, 0.0533f, 0.07f)
+
+    LaunchedEffect(hud) { if (hud != null) { kotlinx.coroutines.delay(1000); hud = null } }
 
     Box(modifier.background(Color.Black)) {
         AndroidView(
@@ -131,6 +164,7 @@ private fun PlayerBox(
             },
             update = {
                 it.useController = overlay && !(vm.audioOnly && vm.current != null)
+                it.resizeMode = if (landscape) when (vm.resizeMode) { 1 -> 4; 2 -> 3; else -> 0 } else 0
                 it.subtitleView?.setFractionalTextSize(sizes[vm.captionSizeIndex.coerceIn(0, 2)])
                 it.subtitleView?.setStyle(captionStyle(vm.captionColorIndex, vm.captionBgIndex))
             },
@@ -178,6 +212,10 @@ private fun PlayerBox(
                 if (vm.captions.isNotEmpty()) IconButton(onClick = { showCaptions = true }) {
                     Icon(Icons.Filled.ClosedCaption, null, tint = if (vm.captionIndex >= 0) YtRed else Color.White)
                 }
+                if (landscape) IconButton(onClick = {
+                    vm.cycleResize()
+                    hud = listOf(L.t("ফিট"), L.t("জুম (ক্রপ)"), L.t("ফুল (স্ট্রেচ)"))[vm.resizeMode]
+                }) { Icon(Icons.Filled.AspectRatio, null, tint = if (vm.resizeMode != 0) YtRed else Color.White) }
                 IconButton(onClick = { showSettings = true }) { Icon(Icons.Filled.Settings, null, tint = Color.White) }
                 IconButton(onClick = onFullscreen) {
                     Icon(if (landscape) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen, null, tint = Color.White)

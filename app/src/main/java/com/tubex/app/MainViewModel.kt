@@ -111,6 +111,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var heights by mutableStateOf<List<Int>>(emptyList()); private set
     var quality by mutableStateOf(0); private set          // 0 = Auto
     var speed by mutableStateOf(1f); private set
+    var resizeMode by mutableStateOf(prefs.resizeMode); private set
     var likes by mutableStateOf<Long?>(null); private set
     var dislikes by mutableStateOf<Long?>(null); private set
     var captions by mutableStateOf<List<SubtitlesStream>>(emptyList()); private set
@@ -438,6 +439,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun chooseCaptionColor(i: Int) { captionColorIndex = i; prefs.captionColor = i }
     fun chooseCaptionBg(i: Int) { captionBgIndex = i; prefs.captionBg = i }
     fun chooseSpeed(s: Float) { speed = s; player.setPlaybackSpeed(s) }
+    fun cycleResize() { resizeMode = (resizeMode + 1) % 3; prefs.resizeMode = resizeMode }
 
     // ---------- ডিফল্ট কোয়ালিটি, লুপ, অডিও-অনলি, স্লিপ টাইমার ----------
     private fun defaultQuality(available: List<Int>): Int {

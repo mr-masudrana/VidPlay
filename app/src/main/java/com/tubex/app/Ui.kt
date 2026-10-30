@@ -91,6 +91,7 @@ fun YtTheme(index: Int, content: @Composable () -> Unit) {
     val view = LocalView.current
     if (!view.isInEditMode) SideEffect {
         val w = (view.context as? android.app.Activity)?.window ?: return@SideEffect
+        w.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(p.bg.toArgb()))
         w.statusBarColor = p.bg.toArgb()
         w.navigationBarColor = p.bg.toArgb()
         val c = WindowCompat.getInsetsController(w, view)
