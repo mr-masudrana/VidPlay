@@ -68,11 +68,11 @@ fun SplashOverlay(onDone: () -> Unit) {
             },
         contentAlignment = Alignment.Center
     ) {
-        // সিস্টেম স্প্ল্যাশের লোগো (১৯২dp ব্যাসের বৃত্ত) ঠিক একই জায়গায় ও মাপে আঁকা হয়, তাই বদলানোর সময় কোনো লাফ নেই
+        // সিস্টেম স্প্ল্যাশের লোগো (প্রায় ১৮১dp ব্যাসের বৃত্ত) ঠিক একই জায়গায় ও মাপে আঁকা হয়, তাই বদলানোর সময় কোনো লাফ নেই
         run {
             Canvas(Modifier.size(320.dp)) {
                 val c = Offset(size.width / 2f, size.height / 2f)
-                val r = 96.dp.toPx() * scale.value
+                val r = 90.7.dp.toPx() * scale.value
 
                 // ঢেউ: লোগোর চারপাশ থেকে ছড়িয়ে মিলিয়ে যায়
                 if (pulse.value > 0f) drawCircle(
@@ -82,12 +82,12 @@ fun SplashOverlay(onDone: () -> Unit) {
                 drawCircle(Color(0xFFFF0000), radius = r, center = c)
 
                 // প্লে ত্রিভুজ: মাঝ থেকে বড় হয়ে ফোটে
-                val h = r * 0.72f * play.value
-                val w = h * 0.88f
+                val h = r * 0.94f * play.value
+                val w = h * 0.75f
                 val tri = Path().apply {
-                    moveTo(c.x - w * 0.36f, c.y - h / 2f)
-                    lineTo(c.x + w * 0.64f, c.y)
-                    lineTo(c.x - w * 0.36f, c.y + h / 2f)
+                    moveTo(c.x - w / 3f, c.y - h / 2f)
+                    lineTo(c.x + w * 2f / 3f, c.y)
+                    lineTo(c.x - w / 3f, c.y + h / 2f)
                     close()
                 }
                 drawPath(tri, Color.White)

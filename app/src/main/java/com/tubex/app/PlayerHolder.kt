@@ -3,7 +3,9 @@ package com.tubex.app
 import android.content.Context
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import android.net.Uri
 import androidx.media3.common.ForwardingPlayer
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
@@ -31,6 +33,12 @@ private class NavPlayer(p: Player) : ForwardingPlayer(p) {
             .build()
     }
     override fun isCommandAvailable(command: Int) = availableCommands.contains(command)
+
+    /** নোটিফিকেশন/লকস্ক্রিনে এখন যেটা চলছে তার টাইটেল, চ্যানেল ও থাম্বনেইল */
+    override fun getMediaMetadata(): MediaMetadata {
+        val m = PlayerHolder.metadata
+        return if (m === MediaMetadata.EMPTY) super.getMediaMetadata() else m
+    }
     override fun hasNextMediaItem() = nav?.canNext() == true
     override fun hasPreviousMediaItem() = nav?.canPrev() == true
     override fun seekToNext() { nav?.next() }
@@ -44,6 +52,19 @@ object PlayerHolder {
     private var player: ExoPlayer? = null
     private var navPlayer: Player? = null
     @Volatile var navigator: Navigator? = null
+
+    /** এখন চলতে থাকা ভিডিওর মেটাডেটা (নোটিফিকেশনে দেখায়) */
+    @Volatile var metadata: MediaMetadata = MediaMetadata.EMPTY
+
+    fun setNowPlaying(title: String?, channel: String?, thumbUrl: String?) {
+        metadata = MediaMetadata.Builder()
+            .setTitle(title).setDisplayTitle(title)
+            .setArtist(channel).setSubtitle(channel)
+            .apply { if (!thumbUrl.isNullOrBlank()) setArtworkUri(Uri.parse(thumbUrl)) }
+            .build()
+    }
+
+    fun clearNowPlaying() { metadata = MediaMetadata.EMPTY }
 
     /** PlayerView ও MediaSession-এর জন্য পরের/আগের বাটনসহ প্লেয়ার */
     fun navPlayer(ctx: Context): Player = navPlayer ?: NavPlayer(get(ctx)).also { navPlayer = it }

@@ -81,6 +81,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var skipSilence by mutableStateOf(prefs.skipSilence); private set
     var audioOnly by mutableStateOf(prefs.audioOnly); private set
     var notifyOn by mutableStateOf(prefs.notifyEnabled); private set
+    /** সেটিংসের খোলা টপিক পেজ (null = টপিকের তালিকা) */
+    var settingsPage by mutableStateOf<Int?>(null)
     var notifyHours by mutableStateOf(prefs.notifyHours); private set
     var updateNotifyOn by mutableStateOf(prefs.updateNotify); private set
     var loop by mutableStateOf(false); private set
@@ -620,6 +622,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 captions = caps; captionIndex = capIdx
                 audioTracks = YtRepository.audioTracks(info); audioTrackId = YtRepository.defaultAudioTrackId(info)
                 likes = info.likeCount.takeIf { it >= 0 }; dislikes = null
+                PlayerHolder.setNowPlaying(info.name, info.uploaderName, info.thumbnails.maxByOrNull { it.height }?.url ?: info.thumbnails.lastOrNull()?.url)
                 player.setMediaSource(
                     YtRepository.buildSource(info, if (q == 0) 1080 else q, caps.getOrNull(capIdx), audioOnly, audioTrackId), start
                 )
@@ -653,6 +656,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         likes = null; dislikes = null; segments = emptyList(); captions = emptyList(); captionIndex = -1
         audioTracks = emptyList(); audioTrackId = null
         applyTextSelection()
+        PlayerHolder.setNowPlaying(d.title, d.channel, d.thumb)
         player.setMediaItem(MediaItem.fromUri(Uri.fromFile(File(d.path))))
         player.prepare(); player.playWhenReady = true
         expanded = true
@@ -911,6 +915,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         saveProgress(); recordSkip()
         clearQueue()
         player.stop(); player.clearMediaItems()
+        PlayerHolder.clearNowPlaying()
         current = null; local = null; expanded = false
     }
 

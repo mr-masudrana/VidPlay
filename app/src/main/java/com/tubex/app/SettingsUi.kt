@@ -6,6 +6,15 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
@@ -15,6 +24,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.DataSaverOn
 import androidx.compose.material.icons.outlined.Download
@@ -42,21 +52,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 
-/** প্রতিটি গ্রুপ একটি কার্ডে: আইকন + শিরোনাম + ভেতরের অপশন */
+/** একটি সেটিং পেজের কনটেন্ট (শিরোনাম/আইকন এখন টপিক তালিকা ও পেজের হেডারে দেখানো হয়) */
 @Composable
+@Suppress("UNUSED_PARAMETER")
 private fun SectionCard(icon: ImageVector, title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(
-        Modifier.fillMaxWidth().padding(top = 12.dp)
-            .border(1.dp, Sub.copy(alpha = 0.25f), RoundedCornerShape(16.dp))
-            .padding(16.dp)
-    ) {
-        Row(Modifier.padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, null, tint = YtRed, modifier = Modifier.size(22.dp))
-            Spacer(Modifier.width(10.dp))
-            Text(title, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        }
-        content()
-    }
+    Column(Modifier.fillMaxWidth().padding(top = 4.dp)) { content() }
 }
 
 @Composable
@@ -82,8 +82,75 @@ private val AccentSwatches = listOf(
 private fun hueColor(h: Float): Color =
     Color(android.graphics.Color.HSVToColor(floatArrayOf(h.coerceIn(0f, 359.9f), 0.75f, 1f)))
 
+// ---------- সেটিংস: প্রথমে শুধু টপিকের তালিকা, ট্যাপ করলে সেই টপিকের পেজ ----------
+private class SettingsTopic(val icon: ImageVector, val title: String, val sub: String)
+
+private fun settingsTopics(): List<SettingsTopic> = listOf(
+    SettingsTopic(Icons.Outlined.Language, L.t("ভাষা / Language"), L.t("অ্যাপের ভাষা বদলান")),
+    SettingsTopic(Icons.Outlined.Palette, L.t("চেহারা ও থিম"), L.t("থিম, রঙ ও চেহারা")),
+    SettingsTopic(Icons.Outlined.PlayCircle, L.t("প্লেব্যাক"), L.t("অটোপ্লে, PiP, ভাসমান প্লেয়ার, স্পন্সর বাদ")),
+    SettingsTopic(Icons.Outlined.DataSaverOn, L.t("ডেটা সেভার ও কোয়ালিটি"), L.t("ভিডিওর মান ও ডেটা সাশ্রয়")),
+    SettingsTopic(Icons.Outlined.Download, L.t("ডাউনলোড"), L.t("শুধু ওয়াইফাই ও একসাথে কয়টা ডাউনলোড")),
+    SettingsTopic(Icons.Outlined.PrivacyTip, L.t("প্রাইভেসি ও ইতিহাস"), L.t("সার্চ ও দেখার ইতিহাস")),
+    SettingsTopic(Icons.Outlined.Notifications, L.t("নতুন ভিডিওর নোটিফিকেশন"), L.t("সাবস্ক্রাইব করা চ্যানেলের নতুন ভিডিও")),
+    SettingsTopic(Icons.Outlined.Tune, "DeArrow", L.t("ক্লিকবেইট শিরোনাম ও থাম্বনেইল ঠিক করা")),
+    SettingsTopic(Icons.Outlined.Link, L.t("YouTube লিংক"), L.t("YouTube লিংক খোলার ব্যবস্থা")),
+    SettingsTopic(Icons.Outlined.Insights, L.t("আপনার রিকমেন্ডেশন প্রোফাইল"), L.t("আপনার আগ্রহের বিষয়গুলো")),
+    SettingsTopic(Icons.Outlined.Block, L.t("ব্লক তালিকা"), L.t("লুকাতে চাওয়া চ্যানেল ও শব্দ")),
+    SettingsTopic(Icons.Outlined.Storage, L.t("ডেটা"), L.t("ইম্পোর্ট, এক্সপোর্ট ও রিসেট")),
+    SettingsTopic(Icons.Outlined.Info, L.t("অ্যাপ সম্পর্কে"), L.t("ভার্সন ও আপডেট"))
+)
+
+/** টপ বারে দেখানোর জন্য টপিকের নাম */
+fun settingsTopicTitle(i: Int): String = settingsTopics().getOrNull(i)?.title ?: L.t("সেটিংস")
+
+/** টপিকের তালিকা (প্রিভিউতে onPick খালি দেওয়া হয়) */
 @Composable
-fun SettingsTab(vm: MainViewModel) {
+fun SettingsTopicList(onPick: (Int) -> Unit) {
+    val topics = settingsTopics()
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 4.dp)) {
+        topics.forEachIndexed { i, t ->
+            Row(
+                Modifier.fillMaxWidth().clickable { onPick(i) }.padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(Modifier.size(40.dp).clip(CircleShape).background(Chip), Alignment.Center) {
+                    Icon(t.icon, null, tint = YtRed, modifier = Modifier.size(22.dp))
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(t.title, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    Text(t.sub, color = Sub, fontSize = 12.sp, maxLines = 1)
+                }
+                Icon(Icons.Filled.ChevronRight, null, tint = Sub)
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+fun SettingsTab(vm: MainViewModel, skipAnim: Boolean = false) {
+    AnimatedContent(
+        targetState = vm.settingsPage,
+        modifier = Modifier.fillMaxSize(),
+        transitionSpec = {
+            when {
+                skipAnim -> EnterTransition.None togetherWith ExitTransition.None
+                targetState != null ->
+                    (slideInHorizontally(tween(260)) { it / 4 } + fadeIn(tween(260))) togetherWith fadeOut(tween(160))
+                else ->
+                    fadeIn(tween(220)) togetherWith (slideOutHorizontally(tween(240)) { it / 4 } + fadeOut(tween(200)))
+            }
+        },
+        label = "settingsPage"
+    ) { p ->
+        if (p == null) SettingsTopicList { vm.settingsPage = it } else SettingsPage(vm, p)
+    }
+}
+
+@Composable
+private fun SettingsPage(vm: MainViewModel, page: Int) {
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importNewPipe(uri)
     }
@@ -102,7 +169,7 @@ fun SettingsTab(vm: MainViewModel) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 4.dp)) {
 
         // ---------- ভাষা ----------
-        SectionCard(Icons.Outlined.Language, L.t("ভাষা / Language")) {
+        if (page == 0) SectionCard(Icons.Outlined.Language, L.t("ভাষা / Language")) {
             val modes = listOf(L.t("বাংলা"), "English", L.t("সিস্টেম"))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(modes.size) { i ->
@@ -112,7 +179,7 @@ fun SettingsTab(vm: MainViewModel) {
         }
 
         // ---------- চেহারা ও থিম ----------
-        SectionCard(Icons.Outlined.Palette, L.t("চেহারা ও থিম")) {
+        if (page == 1) SectionCard(Icons.Outlined.Palette, L.t("চেহারা ও থিম")) {
             SwitchRow(
                 L.t("সিস্টেম থিম অনুসরণ (অটো)"),
                 L.t("ফোন ডার্ক মোডে থাকলে ডার্ক, নাহলে লাইট থিম নিজে বদলাবে"),
@@ -169,7 +236,7 @@ fun SettingsTab(vm: MainViewModel) {
         }
 
         // ---------- প্লেব্যাক ----------
-        SectionCard(Icons.Outlined.PlayCircle, L.t("প্লেব্যাক")) {
+        if (page == 2) SectionCard(Icons.Outlined.PlayCircle, L.t("প্লেব্যাক")) {
             SwitchRow(L.t("অটোপ্লে"), L.t("ভিডিও শেষে পরের ভিডিও নিজে চলবে"), vm.autoplay) { vm.applyAutoplay(it) }
             SwitchRow(
                 L.t("ব্যাকগ্রাউন্ড প্লে"),
@@ -189,7 +256,7 @@ fun SettingsTab(vm: MainViewModel) {
         }
 
         // ---------- ডেটা সেভার ও কোয়ালিটি ----------
-        SectionCard(Icons.Outlined.DataSaverOn, L.t("ডেটা সেভার ও কোয়ালিটি")) {
+        if (page == 3) SectionCard(Icons.Outlined.DataSaverOn, L.t("ডেটা সেভার ও কোয়ালিটি")) {
             SwitchRow(
                 L.t("ডেটা সেভার মোড"),
                 L.t("সব নেটওয়ার্কে সর্বোচ্চ 360p এবং পরের ভিডিও আগাম লোড বন্ধ"),
@@ -217,7 +284,7 @@ fun SettingsTab(vm: MainViewModel) {
         }
 
         // ---------- ডাউনলোড ----------
-        SectionCard(Icons.Outlined.Download, L.t("ডাউনলোড")) {
+        if (page == 4) SectionCard(Icons.Outlined.Download, L.t("ডাউনলোড")) {
             SwitchRow(
                 L.t("শুধু ওয়াইফাইয়ে ডাউনলোড"),
                 L.t("মোবাইল ডেটায় ডাউনলোড থেমে থাকবে, ওয়াইফাই পেলে নিজে চলবে"),
@@ -235,7 +302,7 @@ fun SettingsTab(vm: MainViewModel) {
         }
 
         // ---------- প্রাইভেসি ও ইতিহাস ----------
-        SectionCard(Icons.Outlined.PrivacyTip, L.t("প্রাইভেসি ও ইতিহাস")) {
+        if (page == 5) SectionCard(Icons.Outlined.PrivacyTip, L.t("প্রাইভেসি ও ইতিহাস")) {
             SwitchRow(
                 L.t("ওয়াচ হিস্টরি সংরক্ষণ"),
                 L.t("বন্ধ থাকলে দেখা ভিডিও ইতিহাসে যোগ হবে না (শেষ জায়গা থেকে চালুও হবে না)"),
@@ -255,7 +322,7 @@ fun SettingsTab(vm: MainViewModel) {
         }
 
         // ---------- নোটিফিকেশন ----------
-        SectionCard(Icons.Outlined.Notifications, L.t("নতুন ভিডিওর নোটিফিকেশন")) {
+        if (page == 6) SectionCard(Icons.Outlined.Notifications, L.t("নতুন ভিডিওর নোটিফিকেশন")) {
             SwitchRow(L.t("সাবস্ক্রাইব করা চ্যানেল"), L.t("ব্যাকগ্রাউন্ডে মাঝে মাঝে চেক করে নোটিফিকেশন দেয়"), vm.notifyOn) { vm.toggleNotify(it) }
             val hrs = listOf(3, 6, 12, 24)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -272,14 +339,14 @@ fun SettingsTab(vm: MainViewModel) {
         }
 
         // ---------- DeArrow ----------
-        SectionCard(Icons.Outlined.Tune, "DeArrow") {
+        if (page == 7) SectionCard(Icons.Outlined.Tune, "DeArrow") {
             Text(L.t("ক্লিকবেইট টাইটেল ও থাম্বনেইল কমিউনিটির দেওয়া সংস্করণে বদলায়"), color = Sub, fontSize = 12.sp)
             SwitchRow(L.t("টাইটেল"), L.t("আরও সৎ টাইটেল দেখায়"), DeArrow.titles) { vm.toggleDearrowTitles(it) }
             SwitchRow(L.t("থাম্বনেইল"), L.t("ভিডিওর আসল দৃশ্য থেকে থাম্বনেইল"), DeArrow.thumbs) { vm.toggleDearrowThumbs(it) }
         }
 
         // ---------- লিংক ----------
-        SectionCard(Icons.Outlined.Link, L.t("YouTube লিংক")) {
+        if (page == 8) SectionCard(Icons.Outlined.Link, L.t("YouTube লিংক")) {
             Text(
                 L.t("youtube.com ও youtu.be লিংক TubeX-তে খুলতে \"ডিফল্টে খুলুন\" থেকে লিংকগুলো চালু করুন। শেয়ার মেনু থেকেও পাঠানো যায়।"),
                 color = Sub, fontSize = 12.sp
@@ -296,7 +363,7 @@ fun SettingsTab(vm: MainViewModel) {
         }
 
         // ---------- রিকমেন্ডেশন ----------
-        SectionCard(Icons.Outlined.Insights, L.t("আপনার রিকমেন্ডেশন প্রোফাইল")) {
+        if (page == 9) SectionCard(Icons.Outlined.Insights, L.t("আপনার রিকমেন্ডেশন প্রোফাইল")) {
             Text(L.t("সব ডেটা শুধু এই ফোনে থাকে। এখানে দেখুন অ্যাপ আপনার সম্পর্কে কী শিখেছে।"), color = Sub, fontSize = 12.sp)
             Spacer(Modifier.height(8.dp))
             if (vm.topInterests.isEmpty()) Text(L.t("এখনো কিছু শেখেনি — কয়েকটি ভিডিও দেখুন।"), color = Sub, fontSize = 13.sp)
@@ -317,7 +384,7 @@ fun SettingsTab(vm: MainViewModel) {
         }
 
         // ---------- ব্লক তালিকা ----------
-        SectionCard(Icons.Outlined.Block, L.t("ব্লক তালিকা")) {
+        if (page == 10) SectionCard(Icons.Outlined.Block, L.t("ব্লক তালিকা")) {
             Text(L.t("ভিডিও কার্ডের ⋮ মেনু থেকেও \"আগ্রহ নেই\" বা ব্লক করা যায়।"), color = Sub, fontSize = 12.sp)
             Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
@@ -341,7 +408,7 @@ fun SettingsTab(vm: MainViewModel) {
         }
 
         // ---------- ডেটা ----------
-        SectionCard(Icons.Outlined.Storage, L.t("ডেটা")) {
+        if (page == 11) SectionCard(Icons.Outlined.Storage, L.t("ডেটা")) {
             OutlinedButton(onClick = { picker.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) {
                 Text(L.t("NewPipe ইম্পোর্ট (সাবস্ক্রিপশন JSON বা ব্যাকআপ ZIP: সাবস্ক্রিপশন + ইতিহাস)"))
             }
@@ -357,7 +424,7 @@ fun SettingsTab(vm: MainViewModel) {
         }
 
         // ---------- অ্যাপ সম্পর্কে ----------
-        AboutSection(vm)
+        if (page == 12) AboutSection(vm)
         Spacer(Modifier.height(32.dp))
     }
 }

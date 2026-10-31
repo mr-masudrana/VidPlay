@@ -33,6 +33,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -273,7 +274,11 @@ fun MainScaffold(vm: MainViewModel) {
     var skipTabAnim by remember { mutableStateOf(false) }
     val backAnim = rememberPredictiveBack(enabled = vm.tab != 0 || vm.searching, deferBack = true) {
         skipTabAnim = true
-        if (vm.tab != 0) vm.tab = 0 else vm.closeSearch()
+        when {
+            vm.tab == 3 && vm.settingsPage != null -> vm.settingsPage = null   // টপিক পেজ থেকে তালিকায়
+            vm.tab != 0 -> vm.tab = 0
+            else -> vm.closeSearch()
+        }
     }
     val backIdle = backAnim.progress == 0f
     LaunchedEffect(backIdle) { if (backIdle) skipTabAnim = false }
@@ -282,7 +287,11 @@ fun MainScaffold(vm: MainViewModel) {
 
     Box(Modifier.fillMaxSize().background(Bg)) {
         // ব্যাক জেসচার চলার সময় নিচে আগের (হোম) পেজের প্রিভিউ; ওপরের পেজ মিলিয়ে গেলে এটি ফুটে ওঠে
-        if (backAnim.progress > 0f) HomePreview(vm, statusDp, bottomDp)
+        if (backAnim.progress > 0f) {
+            // জেসচার শুরুর মুহূর্তে ঠিক হয়: সেটিংস টপিক পেজ থেকে ব্যাকে নিচে টপিকের তালিকা, নাহলে হোম
+            val settingsList = remember(backAnim.progress > 0f) { vm.tab == 3 && vm.settingsPage != null }
+            if (settingsList) SettingsListPreview(statusDp, bottomDp) else HomePreview(vm, statusDp, bottomDp)
+        }
         Box(Modifier.fillMaxSize().predictiveBackLayer(backAnim).background(Bg)) {
             // ট্যাব বদলালে ডানে/বামে স্লাইড + ক্রসফেড (ট্যাবের ক্রম অনুযায়ী দিক ঠিক হয়)
             AnimatedContent(
@@ -304,14 +313,20 @@ fun MainScaffold(vm: MainViewModel) {
                         when (tab) {
                             1 -> SubsTab(vm)
                             2 -> LibraryTab(vm)
-                            else -> SettingsTab(vm)
+                            else -> SettingsTab(vm, skipTabAnim)
                         }
                     }
                     Box(
                         Modifier.align(Alignment.TopStart).fillMaxWidth().padding(top = statusDp)
                             .height(TopBarH).background(Bg),
                         Alignment.CenterStart
-                    ) { Text(tabs[tab].third, fontWeight = FontWeight.Bold, fontSize = 20.sp, modifier = Modifier.padding(start = 16.dp)) }
+                    ) {
+                        val sp = if (tab == 3) vm.settingsPage else null
+                        if (sp != null) Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { vm.settingsPage = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) }
+                            Text(settingsTopicTitle(sp), fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                        } else Text(tabs[tab].third, fontWeight = FontWeight.Bold, fontSize = 20.sp, modifier = Modifier.padding(start = 16.dp))
+                    }
                 }
             }
         }
@@ -334,7 +349,9 @@ fun MainScaffold(vm: MainViewModel) {
                         val sel = vm.tab == i
                         Column(
                             Modifier.weight(1f).fillMaxHeight().clickable {
-                                if (i == 0 && vm.tab == 0) vm.scrollHomeToTop() else vm.tab = i
+                                if (i == 0 && vm.tab == 0) vm.scrollHomeToTop()
+                                else if (i == 3 && vm.tab == 3) vm.settingsPage = null
+                                else vm.tab = i
                             },
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center
@@ -581,6 +598,18 @@ private fun HomeFeed(vm: MainViewModel, shown: List<VideoItem>, listState: LazyL
             }
         }
     }
+}
+
+/** সেটিংস টপিক পেজ থেকে ব্যাকে নিচে দেখানো টপিক তালিকার স্থির প্রিভিউ */
+@Composable
+private fun SettingsListPreview(statusDp: Dp, bottomDp: Dp) {
+    Box(Modifier.fillMaxSize().background(Bg).padding(top = statusDp + TopBarH, bottom = bottomDp)) {
+        SettingsTopicList { }
+    }
+    Box(
+        Modifier.fillMaxWidth().padding(top = statusDp).height(TopBarH).background(Bg),
+        Alignment.CenterStart
+    ) { Text(L.t("সেটিংস"), fontWeight = FontWeight.Bold, fontSize = 20.sp, modifier = Modifier.padding(start = 16.dp)) }
 }
 
 /** ব্যাক জেসচারে নিচে দেখানো আগের হোম পেজের স্থির প্রিভিউ (ইন্টারঅ্যাকশন নেই) */

@@ -8,7 +8,15 @@ import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.view.View
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -567,46 +575,100 @@ private fun ToggleRow(title: String, subtitle: String, checked: Boolean, enabled
     }
 }
 
+private class PTopic(val id: Int, val icon: androidx.compose.ui.graphics.vector.ImageVector, val title: String, val sub: String)
+
+/** প্লেয়ার সেটিংস: প্রথমে শুধু টপিকের তালিকা; টপিকে ট্যাপ করলে সেই টপিকের অপশন */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PlayerSettingsSheet(vm: MainViewModel, onDismiss: () -> Unit) {
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var page by remember { mutableStateOf<Int?>(null) }
+    BackHandler(enabled = page != null) { page = null }
+
+    fun sleepLabel(m: Int) = when (m) { 0 -> L.t("বন্ধ"); -1 -> L.t("ভিডিও শেষে"); else -> L.f("{0} মি", m) }
+    val repeatLabels = listOf(L.t("বন্ধ"), L.t("কিউ"), L.t("একটি ভিডিও"))
+
+    val topics = buildList {
+        add(PTopic(0, Icons.Outlined.Speed, L.t("প্লেব্যাক গতি"), "${vm.speed}x"))
+        if (vm.current != null && !vm.audioOnly)
+            add(PTopic(1, Icons.Outlined.HighQuality, L.t("ভিডিও কোয়ালিটি"), if (vm.quality == 0) "Auto" else "${vm.quality}p"))
+        if (vm.current != null && vm.audioTracks.size > 1)
+            add(PTopic(2, Icons.Outlined.Audiotrack, L.t("অডিও ট্র্যাক"),
+                vm.audioTracks.firstOrNull { it.id == vm.audioTrackId }?.label ?: ""))
+        add(PTopic(3, Icons.Outlined.Bedtime, L.t("স্লিপ টাইমার"), sleepLabel(vm.sleepMin)))
+        add(PTopic(4, Icons.Outlined.Repeat, L.t("রিপিট ও শাফল"),
+            repeatLabels[vm.repeat.coerceIn(0, 2)] + if (vm.shuffle) " • " + L.t("শাফল") else ""))
+        add(PTopic(5, Icons.Outlined.Headphones, L.t("অডিও সেটিং"), L.t("শুধু অডিও, নীরবতা বাদ")))
+    }
+
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = state, containerColor = Chip) {
-        Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
-            OptionRow(L.t("প্লেব্যাক গতি"), listOf(0.25f, 0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f), vm.speed, { "${it}x" }) { vm.chooseSpeed(it) }
-
-            if (vm.current != null && !vm.audioOnly) {
-                OptionRow(L.t("ভিডিও কোয়ালিটি"), listOf(0) + vm.heights, vm.quality, { if (it == 0) "Auto" else "${it}p" }) {
-                    vm.selectQuality(it)
+        AnimatedContent(
+            targetState = page,
+            transitionSpec = {
+                if (targetState != null)
+                    (slideInHorizontally(tween(240)) { it / 4 } + fadeIn(tween(240))) togetherWith fadeOut(tween(140))
+                else
+                    fadeIn(tween(200)) togetherWith (slideOutHorizontally(tween(220)) { it / 4 } + fadeOut(tween(160)))
+            },
+            label = "playerSettings"
+        ) { pg ->
+            if (pg == null) {
+                Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
+                    topics.forEach { t ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable { page = t.id }.padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(Modifier.size(40.dp).clip(CircleShape).background(Bg.copy(alpha = 0.6f)), Alignment.Center) {
+                                Icon(t.icon, null, tint = YtRed, modifier = Modifier.size(22.dp))
+                            }
+                            Spacer(Modifier.width(14.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(t.title, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                                if (t.sub.isNotBlank()) Text(t.sub, color = Sub, fontSize = 12.sp, maxLines = 1)
+                            }
+                            Icon(Icons.Filled.ChevronRight, null, tint = Sub)
+                        }
+                    }
                 }
-            }
-
-            if (vm.current != null && vm.audioTracks.size > 1) {
-                OptionRow(
-                    L.t("অডিও ট্র্যাক"), vm.audioTracks.map { it.id }, vm.audioTrackId,
-                    { id -> vm.audioTracks.firstOrNull { it.id == id }?.label ?: "" }
-                ) { vm.chooseAudioTrack(it) }
-            }
-
-            OptionRow(
-                L.t("স্লিপ টাইমার"), listOf(0, 15, 30, 45, 60, -1),
-                vm.sleepMin,
-                { when (it) { 0 -> L.t("বন্ধ"); -1 -> L.t("ভিডিও শেষে"); else -> L.f("{0} মি", it) } }
-            ) { vm.startSleep(it) }
-            if (vm.sleepEnd > 0) {
-                val left = ((vm.sleepEnd - System.currentTimeMillis()) / 60_000 + 1).coerceAtLeast(1)
-                Text(L.f("চালু আছে — প্রায় {0} মিনিট পরে থামবে", left), color = Sub, fontSize = 12.sp,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-            }
-
-            Spacer(Modifier.height(8.dp))
-            OptionRow(L.t("রিপিট"), listOf(0, 1, 2), vm.repeat, { listOf(L.t("বন্ধ"), L.t("কিউ"), L.t("একটি ভিডিও"))[it] }) { vm.chooseRepeat(it) }
-            ToggleRow(L.t("শাফল"), L.t("কিউ থেকে এলোমেলো ভিডিও চলবে"), vm.shuffle) { vm.toggleShuffle(it) }
-            ToggleRow(L.t("শুধু অডিও"), L.t("ভিডিও ছাড়া চলবে, ডেটা বাঁচবে"), vm.audioOnly, enabled = vm.current != null) {
-                vm.toggleAudioOnly(it)
-            }
-            ToggleRow(L.t("নীরবতা বাদ (Skip Silence)"), L.t("কথার ফাঁকের নীরব অংশ বাদ যাবে"), vm.skipSilence) {
-                vm.toggleSkipSilence(it)
+            } else {
+                val title = topics.firstOrNull { it.id == pg }?.title ?: ""
+                Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { page = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) }
+                        Text(title, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    }
+                    when (pg) {
+                        0 -> OptionRow(L.t("প্লেব্যাক গতি"), listOf(0.25f, 0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f), vm.speed, { "${it}x" }) { vm.chooseSpeed(it) }
+                        1 -> OptionRow(L.t("ভিডিও কোয়ালিটি"), listOf(0) + vm.heights, vm.quality, { if (it == 0) "Auto" else "${it}p" }) {
+                            vm.selectQuality(it)
+                        }
+                        2 -> OptionRow(
+                            L.t("অডিও ট্র্যাক"), vm.audioTracks.map { it.id }, vm.audioTrackId,
+                            { id -> vm.audioTracks.firstOrNull { it.id == id }?.label ?: "" }
+                        ) { vm.chooseAudioTrack(it) }
+                        3 -> {
+                            OptionRow(L.t("স্লিপ টাইমার"), listOf(0, 15, 30, 45, 60, -1), vm.sleepMin, { sleepLabel(it) }) { vm.startSleep(it) }
+                            if (vm.sleepEnd > 0) {
+                                val left = ((vm.sleepEnd - System.currentTimeMillis()) / 60_000 + 1).coerceAtLeast(1)
+                                Text(L.f("চালু আছে — প্রায় {0} মিনিট পরে থামবে", left), color = Sub, fontSize = 12.sp,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                            }
+                        }
+                        4 -> {
+                            OptionRow(L.t("রিপিট"), listOf(0, 1, 2), vm.repeat, { repeatLabels[it] }) { vm.chooseRepeat(it) }
+                            ToggleRow(L.t("শাফল"), L.t("কিউ থেকে এলোমেলো ভিডিও চলবে"), vm.shuffle) { vm.toggleShuffle(it) }
+                        }
+                        5 -> {
+                            ToggleRow(L.t("শুধু অডিও"), L.t("ভিডিও ছাড়া চলবে, ডেটা বাঁচবে"), vm.audioOnly, enabled = vm.current != null) {
+                                vm.toggleAudioOnly(it)
+                            }
+                            ToggleRow(L.t("নীরবতা বাদ (Skip Silence)"), L.t("কথার ফাঁকের নীরব অংশ বাদ যাবে"), vm.skipSilence) {
+                                vm.toggleSkipSilence(it)
+                            }
+                        }
+                    }
+                }
             }
         }
     }

@@ -74,6 +74,7 @@ class MainActivity : ComponentActivity() {
     /** YouTube লিংক (VIEW) বা শেয়ার করা টেক্সট (SEND) থেকে ভিডিও/চ্যানেল খোলা */
     private fun handleIntent(i: Intent?) {
         if (i == null) return
+        if (i.action == ACTION_OPEN_PLAYER) { vm.expand(); return }   // নোটিফিকেশন থেকে: প্লেয়ার পেজ
         val url = when (i.action) {
             Intent.ACTION_VIEW -> i.dataString
             Intent.ACTION_SEND -> i.getStringExtra(Intent.EXTRA_TEXT)?.let { Regex("https?://\\S+").find(it)?.value }
@@ -108,5 +109,9 @@ class MainActivity : ComponentActivity() {
         controllerFuture?.let { MediaController.releaseFuture(it) }
         controller = null
         super.onDestroy()
+    }
+
+    companion object {
+        const val ACTION_OPEN_PLAYER = "com.tubex.app.OPEN_PLAYER"
     }
 }
