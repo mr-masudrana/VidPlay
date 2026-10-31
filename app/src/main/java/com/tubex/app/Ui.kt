@@ -162,7 +162,7 @@ fun YtApp(vm: MainViewModel) = CompositionLocalProvider(LocalVm provides vm) {
         if (vm.active && !vm.expanded && vm.floatingMini) {
             FloatingPlayer(vm, constraints.maxWidth.toFloat(), constraints.maxHeight.toFloat())
         }
-        if (vm.expanded && vm.active) PlayerScreen(vm)
+        if (vm.expanded && (vm.active || vm.loadingNew)) PlayerScreen(vm)
         if (vm.opening) LinearProgressIndicator(
             Modifier.fillMaxWidth().statusBarsPadding(), color = YtRed, trackColor = Color.Transparent
         )
@@ -300,9 +300,7 @@ fun HomeTab(vm: MainViewModel) {
                 )
             }
         }
-        if (vm.loading && vm.feed.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) {
-            CircularProgressIndicator(color = YtRed)
-        }
+        if (vm.loading && vm.feed.isEmpty()) VideoListSkeleton(3)
         vm.error?.let { Text(it, color = Sub, modifier = Modifier.padding(16.dp)) }
         LazyColumn {
             if (cont.isNotEmpty()) item {

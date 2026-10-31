@@ -60,9 +60,7 @@ fun SubsTab(vm: MainViewModel) {
                 }
             }
         }
-        if (vm.loading && vm.subsFeed.isEmpty()) item {
-            Box(Modifier.fillMaxWidth().padding(24.dp), Alignment.Center) { CircularProgressIndicator(color = YtRed) }
-        }
+        if (vm.loading && vm.subsFeed.isEmpty()) item { VideoListSkeleton(3) }
         items(vm.subsFeed) { v -> VideoCard(v, onChannel = { vm.openChannel(v.channelUrl) }) { vm.play(v.url) } }
     }
 }

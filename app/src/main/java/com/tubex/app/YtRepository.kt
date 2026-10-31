@@ -121,7 +121,7 @@ object YtRepository {
         id = commentId ?: "",
         author = uploaderName ?: "",
         authorUrl = uploaderUrl,
-        text = commentText?.content ?: "",
+        text = TextUtil.clean(commentText?.content),
         likes = textualLikeCount ?: "",
         date = textualUploadDate ?: "",
         avatar = uploaderAvatars.lastOrNull()?.url,

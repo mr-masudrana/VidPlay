@@ -21,6 +21,11 @@ class Prefs(ctx: Context) {
         get() = sp.getString("captionLang", "") ?: ""
         set(v) { sp.edit().putString("captionLang", v).apply() }
 
+    /** ভিডিও শেষে পরের ভিডিও নিজে চলবে কি না */
+    var autoplay: Boolean
+        get() = sp.getBoolean("autoplay", true)
+        set(v) { sp.edit().putBoolean("autoplay", v).apply() }
+
     /** ফুলস্ক্রিন ভিডিও মাপ: 0 ফিট, 1 জুম (ক্রপ), 2 ফুল (স্ট্রেচ) */
     var resizeMode: Int
         get() = sp.getInt("resizeMode", 0)

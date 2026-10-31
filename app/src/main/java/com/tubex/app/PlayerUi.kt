@@ -15,15 +15,19 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
@@ -95,13 +99,18 @@ fun PlayerScreen(vm: MainViewModel) {
         return
     }
 
+    val boxModifier = if (landscape) Modifier.fillMaxSize()
+    else Modifier.fillMaxWidth().aspectRatio(16f / 9f).statusBarsPadding()
+
     Column(Modifier.fillMaxSize().background(Bg)) {
-        PlayerBox(
-            vm, landscape, overlay = true, onFullscreen = { toggleFullscreen() },
-            modifier = if (landscape) Modifier.fillMaxSize()
-            else Modifier.fillMaxWidth().aspectRatio(16f / 9f).statusBarsPadding()
-        )
-        if (!landscape) Details(vm)
+        if (vm.loadingNew) {
+            // ট্যাপ করার সাথে সাথেই খোলে: থাম্বনেইল + স্কেলিটন, তারপর আসল কনটেন্ট
+            LoadingPlayerBox(vm.loadingHint, boxModifier) { vm.minimize() }
+            if (!landscape) PlayerDetailsSkeleton(vm.loadingHint?.title)
+        } else {
+            PlayerBox(vm, landscape, overlay = true, onFullscreen = { toggleFullscreen() }, modifier = boxModifier)
+            if (!landscape) Details(vm)
+        }
     }
 }
 
@@ -142,14 +151,22 @@ private fun PlayerBox(
     var hud by remember { mutableStateOf<String?>(null) }
     val sizes = floatArrayOf(0.04f, 0.0533f, 0.07f)
 
-    LaunchedEffect(hud) { if (hud != null) { kotlinx.coroutines.delay(1000); hud = null } }
+    // AndroidView-এর factory একবারই চলে, তাই সর্বশেষ মান রাখার জন্য
+    val landscapeNow = androidx.compose.runtime.rememberUpdatedState(landscape)
+    val fullscreenNow = androidx.compose.runtime.rememberUpdatedState(onFullscreen)
+
+    LaunchedEffect(hud) { if (hud != null && hud != HUD_2X) { kotlinx.coroutines.delay(1000); hud = null } }
 
     Box(modifier.background(Color.Black)) {
         AndroidView(
             factory = { c ->
                 PlayerView(c).apply {
-                    player = vm.player
-                    setShowNextButton(false); setShowPreviousButton(false)
+                    player = vm.controllerPlayer
+                    // ৫সে পেছনে/১৫সে সামনে বাটনের জায়গায় আগের/পরের ভিডিও বাটন
+                    setShowRewindButton(false); setShowFastForwardButton(false)
+                    setShowNextButton(true); setShowPreviousButton(true)
+                    // কন্ট্রোলারের নিচের ডানের ডিফল্ট সেটিংস গিয়ার বাদ (সেটিংস এখন ওপরে ডানে)
+                    findViewById<View>(androidx.media3.ui.R.id.exo_settings)?.visibility = View.GONE
                     setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { v ->
                         controls = v == View.VISIBLE
                     })
@@ -159,7 +176,9 @@ private fun PlayerBox(
                             CaptionStyleCompat.EDGE_TYPE_NONE, android.graphics.Color.WHITE, null
                         )
                     )
-                    setOnTouchListener(PlayerGestures(c, vm.player, this) { hud = it })
+                    setOnTouchListener(
+                        PlayerGestures(c, vm.player, this, { landscapeNow.value }, { fullscreenNow.value() }, { vm.minimize() }) { hud = it }
+                    )
                 }
             },
             update = {
@@ -173,20 +192,20 @@ private fun PlayerBox(
 
         if (vm.audioOnly && vm.current != null) AudioOnlyLayer(vm)
 
-        // জেসচার HUD (ব্রাইটনেস/ভলিউম/সিক)
+        // জেসচার HUD (ব্রাইটনেস/ভলিউম/সিক/স্পিড/মিউট): স্ক্রিনের মাঝে উপরে
         hud?.let {
             Text(
-                it, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Medium,
-                modifier = Modifier.align(Alignment.Center)
-                    .background(Color(0x99000000), RoundedCornerShape(12.dp))
-                    .padding(horizontal = 16.dp, vertical = 10.dp)
+                it, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp)
+                    .background(Color(0xB3000000), RoundedCornerShape(50))
+                    .padding(horizontal = 18.dp, vertical = 8.dp)
             )
         }
 
         // Chromecast কন্ট্রোল
         if (overlay && vm.castName != null) {
             Row(
-                Modifier.align(Alignment.TopCenter).padding(top = 52.dp)
+                Modifier.align(Alignment.TopCenter).padding(top = 60.dp)
                     .background(Color(0xCC000000), RoundedCornerShape(24.dp)).padding(start = 14.dp, end = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -198,34 +217,67 @@ private fun PlayerBox(
             }
         }
 
-        if (overlay) AnimatedVisibility(controls || (vm.audioOnly && vm.current != null), Modifier.align(Alignment.TopStart).fillMaxWidth()) {
-            Row(Modifier.padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (!landscape) IconButton(onClick = { vm.minimize() }) {
-                    Icon(Icons.Filled.KeyboardArrowDown, null, tint = Color.White)
-                }
+        val showBars = controls || (vm.audioOnly && vm.current != null)
+
+        // ওপরের সারি: বামে মিনিমাইজ; ডানে ক্রোমকাস্ট ও সেটিংস
+        if (overlay) AnimatedVisibility(showBars, Modifier.align(Alignment.TopStart).fillMaxWidth()) {
+            Row(Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (!landscape) PlayerIconButton(Icons.Rounded.KeyboardArrowDown) { vm.minimize() }
                 Spacer(Modifier.weight(1f))
-                if (vm.castAvailable && vm.current != null) IconButton(onClick = {
-                    if (vm.castName == null) vm.showCastChooser(ctx) else vm.castStop()
-                }) {
-                    Icon(if (vm.castName == null) Icons.Filled.Cast else Icons.Filled.CastConnected, null, tint = Color.White)
+                if (vm.castAvailable && vm.current != null) PlayerIconButton(
+                    if (vm.castName == null) Icons.Rounded.Cast else Icons.Rounded.CastConnected
+                ) { if (vm.castName == null) vm.showCastChooser(ctx) else vm.castStop() }
+                Spacer(Modifier.width(8.dp))
+                PlayerIconButton(Icons.Rounded.Settings) { showSettings = true }
+            }
+        }
+
+        // নিচের ডানে (আগে যেখানে সেটিংস গিয়ার ছিল): সাবটাইটেল, মিউট, মাপ (ল্যান্ডস্কেপ), ফুলস্ক্রিন
+        if (overlay) AnimatedVisibility(showBars, Modifier.align(Alignment.BottomEnd)) {
+            Row(
+                Modifier.padding(end = 8.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (vm.captions.isNotEmpty()) PlayerIconButton(
+                    Icons.Rounded.ClosedCaption, tint = if (vm.captionIndex >= 0) YtRed else Color.White
+                ) { showCaptions = true }
+                PlayerIconButton(if (vm.muted) Icons.Rounded.VolumeOff else Icons.Rounded.VolumeUp) {
+                    vm.toggleMute()
+                    hud = if (vm.muted) "🔇 " + L.t("মিউট") else "🔊 " + L.t("আনমিউট")
                 }
-                if (vm.captions.isNotEmpty()) IconButton(onClick = { showCaptions = true }) {
-                    Icon(Icons.Filled.ClosedCaption, null, tint = if (vm.captionIndex >= 0) YtRed else Color.White)
-                }
-                if (landscape) IconButton(onClick = {
+                if (landscape) PlayerIconButton(
+                    Icons.Rounded.AspectRatio, tint = if (vm.resizeMode != 0) YtRed else Color.White
+                ) {
                     vm.cycleResize()
                     hud = listOf(L.t("ফিট"), L.t("জুম (ক্রপ)"), L.t("ফুল (স্ট্রেচ)"))[vm.resizeMode]
-                }) { Icon(Icons.Filled.AspectRatio, null, tint = if (vm.resizeMode != 0) YtRed else Color.White) }
-                IconButton(onClick = { showSettings = true }) { Icon(Icons.Filled.Settings, null, tint = Color.White) }
-                IconButton(onClick = onFullscreen) {
-                    Icon(if (landscape) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen, null, tint = Color.White)
                 }
+                PlayerIconButton(if (landscape) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen) { onFullscreen() }
             }
         }
     }
 
     if (showCaptions) CaptionSheet(vm) { showCaptions = false }
     if (showSettings) PlayerSettingsSheet(vm) { showSettings = false }
+}
+
+/** ভিডিও লোড হওয়া পর্যন্ত: জানা থাকলে থাম্বনেইল, তার ওপর shimmer ও লোডিং রিং */
+@Composable
+private fun LoadingPlayerBox(hint: VideoItem?, modifier: Modifier, onBack: () -> Unit) {
+    Box(modifier.background(Color.Black)) {
+        if (hint != null) AsyncImage(hint.thumb, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+        SkeletonBox(Modifier.fillMaxSize().alpha(0.35f), RectangleShape)
+        CircularProgressIndicator(Modifier.align(Alignment.Center).size(36.dp), strokeWidth = 3.dp, color = Color.White)
+        Box(Modifier.align(Alignment.TopStart).padding(8.dp)) { PlayerIconButton(Icons.Rounded.KeyboardArrowDown, onClick = onBack) }
+    }
+}
+
+/** ভিডিওর ওপরে স্পষ্ট দেখার জন্য আধা-স্বচ্ছ গোল ব্যাকগ্রাউন্ডসহ রাউন্ডেড আইকন বাটন */
+@Composable
+private fun PlayerIconButton(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color = Color.White, onClick: () -> Unit) {
+    Box(
+        Modifier.size(40.dp).clip(CircleShape).background(Color(0x59000000)).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) { Icon(icon, null, tint = tint, modifier = Modifier.size(26.dp)) }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -284,7 +336,7 @@ private fun Details(vm: MainViewModel) {
     val favs by vm.favorites.collectAsState()
     val lists by vm.playlists.collectAsState()
     val info = vm.current
-    var expandedDesc by remember(info) { mutableStateOf(false) }
+    var showDesc by remember { mutableStateOf(false) }
     var showComments by remember { mutableStateOf(false) }
     var showPlaylists by remember { mutableStateOf(false) }
     var showDownload by remember { mutableStateOf(false) }
@@ -292,26 +344,16 @@ private fun Details(vm: MainViewModel) {
 
     LazyColumn(Modifier.fillMaxSize()) {
         item {
-            Column(Modifier.padding(12.dp)) {
-                Text(
-                    vm.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
-                    maxLines = if (expandedDesc) Int.MAX_VALUE else 2,
-                    modifier = Modifier.clickable { expandedDesc = !expandedDesc }
-                )
+            Column(Modifier.clickable(enabled = info != null) { showDesc = true }.padding(12.dp)) {
+                Text(vm.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 if (info != null) {
-                    Text(
-                        listOf(fmtCount(info.viewCount).let { if (it.isBlank()) "" else "$it views" },
-                            info.textualUploadDate ?: "").filter { it.isNotBlank() }.joinToString(" • "),
-                        color = Sub, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)
+                    StatsLine(info, vm.likes, vm.dislikes, Modifier.padding(top = 6.dp))
+                    val preview = remember(info) { TextUtil.clean(info.description?.content) }
+                    if (preview.isNotBlank()) Text(
+                        preview, color = Sub, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 6.dp)
                     )
-                    if (vm.likes != null) Text(
-                        "👍 ${fmtCount(vm.likes ?: 0L)}" + (vm.dislikes?.let { "   👎 ${fmtCount(it)}" } ?: ""),
-                        fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp)
-                    )
-                    if (expandedDesc) Text(
-                        info.description?.content ?: "", color = Sub, fontSize = 13.sp,
-                        modifier = Modifier.padding(top = 8.dp)
-                    )
+                    Text(L.t("আরও দেখুন"), color = Sub, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 2.dp))
                 } else Text(L.t("অফলাইন (ডাউনলোড করা)"), color = Sub, fontSize = 12.sp)
             }
         }
@@ -355,6 +397,9 @@ private fun Details(vm: MainViewModel) {
                     item {
                         Pill(Icons.Outlined.VideoLibrary, L.t("কিউ") + if (vm.queueItems.isNotEmpty()) " (${vm.queueItems.size})" else "") { showQueue = true }
                     }
+                    item {
+                        Pill(Icons.Outlined.PlayCircle, L.t(if (vm.autoplay) "অটোপ্লে: চালু" else "অটোপ্লে: বন্ধ")) { vm.toggleAutoplay() }
+                    }
                     item { Pill(Icons.Outlined.Download, L.t("ডাউনলোড")) { showDownload = true } }
                     item {
                         Pill(Icons.Outlined.Share, L.t("শেয়ার")) {
@@ -397,9 +442,9 @@ private fun Details(vm: MainViewModel) {
                         fontWeight = FontWeight.SemiBold, fontSize = 14.sp
                     )
                     val first = vm.comments.firstOrNull()
-                    Text(
+                    if (vm.commentsLoading) SkeletonBox(Modifier.padding(top = 8.dp).fillMaxWidth(0.8f).height(14.dp))
+                    else Text(
                         when {
-                            vm.commentsLoading -> L.t("লোড হচ্ছে…")
                             first != null -> first.text
                             else -> L.t("মন্তব্য নেই বা বন্ধ আছে")
                         },
@@ -417,6 +462,7 @@ private fun Details(vm: MainViewModel) {
 
     if (showDownload) DownloadSheet(vm) { showDownload = false }
     if (showQueue) QueueSheet(vm) { showQueue = false }
+    if (showDesc && info != null) DescriptionSheet(vm, info) { showDesc = false }
 
     if (showPlaylists) ModalBottomSheet(onDismissRequest = { showPlaylists = false }, containerColor = Chip) {
         var name by remember { mutableStateOf("") }
@@ -648,11 +694,7 @@ private fun CommentsSheet(vm: MainViewModel, onDismiss: () -> Unit) {
         )
         LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp)) {
             items(sorted.size) { i -> CommentRow(vm, sorted[i], indent = false) }
-            if (vm.commentsLoading || vm.commentsLoadingMore) item {
-                Box(Modifier.fillMaxWidth().padding(16.dp), Alignment.Center) {
-                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp, color = YtRed)
-                }
-            }
+            if (vm.commentsLoading || vm.commentsLoadingMore) item { CommentSkeletons(if (sorted.isEmpty()) 5 else 2) }
             if (sorted.isEmpty() && !vm.commentsLoading) item {
                 Text(L.t("মন্তব্য নেই বা বন্ধ আছে"), color = Sub, modifier = Modifier.padding(16.dp))
             }

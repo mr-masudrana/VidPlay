@@ -24,6 +24,8 @@ import com.google.android.gms.cast.framework.CastSession
 import com.google.android.gms.cast.framework.SessionManagerListener
 import com.google.android.gms.cast.framework.media.RemoteMediaClient
 import com.google.android.gms.common.images.WebImage
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -42,6 +44,7 @@ import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.SubtitlesStream
 import java.io.File
 import java.util.zip.ZipInputStream
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
 
@@ -57,6 +60,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val dao = AppDb.get(app).dao()
     private val prefs = Prefs(app)
     val player = PlayerHolder.get(app)
+    /** কন্ট্রোলারে পরের/আগের বাটন দেখাতে এটা PlayerView-তে দিতে হয় */
+    val controllerPlayer: Player get() = PlayerHolder.navPlayer(app)
 
     // Room
     val subs = dao.subs().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -99,6 +104,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var subsFeed by mutableStateOf<List<VideoItem>>(emptyList()); private set
     var loading by mutableStateOf(false); private set
     var opening by mutableStateOf(false); private set
+    /** নতুন ভিডিওর তথ্য আসার আগ পর্যন্ত true: প্লেয়ার পেজ স্কেলিটনসহ সাথে সাথে খোলে */
+    var loadingNew by mutableStateOf(false); private set
+    var loadingHint by mutableStateOf<VideoItem?>(null); private set
     var error by mutableStateOf<String?>(null); private set
 
     // প্লেয়ার
@@ -112,6 +120,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var quality by mutableStateOf(0); private set          // 0 = Auto
     var speed by mutableStateOf(1f); private set
     var resizeMode by mutableStateOf(prefs.resizeMode); private set
+    var autoplay by mutableStateOf(prefs.autoplay); private set
+    private val backStack = kotlin.collections.ArrayDeque<String>()   // আগে দেখা ভিডিও ("আগের" বাটনের জন্য)
+    private val sessionPlayed = HashSet<String>()                      // এই সেশনে চালানো ভিডিও (অটোপ্লে লুপ ঠেকাতে)
+    private var goingBack = false
     var likes by mutableStateOf<Long?>(null); private set
     var dislikes by mutableStateOf<Long?>(null); private set
     var captions by mutableStateOf<List<SubtitlesStream>>(emptyList()); private set
@@ -177,6 +189,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         DeArrow.titles = prefs.dearrowTitles; DeArrow.thumbs = prefs.dearrowThumbs
         viewModelScope.launch { if (!DownloadEngine.isActive) dao.resetInterrupted() }
         loadForYou()
+        warmUp()
+        PlayerHolder.navigator = object : Navigator {
+            override fun canNext() = this@MainViewModel.canNext()
+            override fun canPrev() = this@MainViewModel.canPrev()
+            override fun next() { playNextVideo() }
+            override fun prev() { playPreviousVideo() }
+        }
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
@@ -187,7 +206,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (state == Player.STATE_ENDED && sleepAtEnd) {
                     sleepAtEnd = false; toast(L.t("স্লিপ টাইমার: প্লেব্যাক বন্ধ")); return
                 }
-                if (state == Player.STATE_ENDED) advanceQueue()
+                if (state == Player.STATE_ENDED && !advanceQueue() && autoplay) playRelatedNext()
             }
             override fun onPlayerError(e: PlaybackException) { error = e.message ?: L.t("প্লেব্যাক এরর") }
         })
@@ -298,8 +317,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun clearQueue() { queueItems = emptyList(); queueIndex = 0; playedInQueue.clear() }
 
     /** ভিডিও শেষে: শাফল/রিপিট অনুযায়ী কিউর পরের আইটেম */
-    private fun advanceQueue() {
-        if (queueItems.isEmpty()) return
+    private fun advanceQueue(): Boolean {
+        if (queueItems.isEmpty()) return false
         val n = queueItems.size
         queueItems.getOrNull(queueIndex)?.let { playedInQueue.add(it.url) }
         val next: Int = if (shuffle) {
@@ -312,7 +331,37 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         } else if (queueIndex + 1 < n) queueIndex + 1
         else if (repeat == 1) 0
         else -1
-        if (next >= 0) { queueIndex = next; startPlay(queueItems[next].url) }
+        if (next >= 0) { queueIndex = next; startPlay(queueItems[next].url); return true }
+        return false
+    }
+
+    // ---------- পরের / আগের ভিডিও, অটোপ্লে ----------
+    /** কিউতে পরের আছে, অথবা সম্পর্কিত ভিডিওর তালিকায় এখনো না-চালানো কিছু আছে */
+    fun canNext(): Boolean = local == null && current != null &&
+            ((queueItems.isNotEmpty() && (queueIndex + 1 < queueItems.size || shuffle || repeat == 1)) ||
+                    related.any { it.url !in sessionPlayed && it.url != current?.url })
+
+    fun canPrev(): Boolean = (queueItems.isNotEmpty() && queueIndex > 0) || backStack.isNotEmpty()
+
+    /** অটোপ্লে: কিউ শেষ হলে বা কিউ না থাকলে সম্পর্কিত ভিডিওর প্রথম নতুনটা */
+    private fun playRelatedNext(): Boolean {
+        val v = related.firstOrNull { it.url !in sessionPlayed && it.url != current?.url } ?: return false
+        clearQueue()
+        startPlay(v.url)
+        return true
+    }
+
+    fun playNextVideo(): Boolean = advanceQueue() || playRelatedNext()
+
+    /** ৩ সেকেন্ডের বেশি চলে থাকলে শুরু থেকে; নইলে আগের ভিডিও (কিউ বা দেখার ইতিহাস থেকে) */
+    fun playPreviousVideo() {
+        if (player.currentPosition > 3_000 || !canPrev()) { player.seekTo(0); return }
+        if (queueItems.isNotEmpty() && queueIndex > 0) {
+            queueIndex -= 1; startPlay(queueItems[queueIndex].url); return
+        }
+        val prev = backStack.removeLastOrNull() ?: run { player.seekTo(0); return }
+        goingBack = true
+        startPlay(prev)
     }
 
     /** কার্ডের মেনু থেকে: পরে চালান (playNext) বা কিউর শেষে যোগ */
@@ -359,40 +408,104 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         player.repeatMode = if (m == 2) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
     }
 
-    private fun startPlay(url: String) = viewModelScope.launch {
+    // ---------- দ্রুত লোডের জন্য ক্যাশ ও প্রি-ফেচ ----------
+    private val infoCache = object : LinkedHashMap<String, Pair<Long, StreamInfo>>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<Long, StreamInfo>>?) = size > 8
+    }
+    private val inflight = ConcurrentHashMap<String, Deferred<StreamInfo>>()
+    private var playJob: Job? = null
+    private var playToken = 0
+
+    /** ক্যাশে (৩০ মিনিট) থাকলে সাথে সাথে; আগে থেকে চলমান প্রি-ফেচ থাকলে তার জন্য অপেক্ষা; নইলে নতুন ফেচ */
+    private suspend fun infoFor(url: String): StreamInfo {
+        infoCache[url]?.takeIf { System.currentTimeMillis() - it.first < 30 * 60_000L }?.let { return it.second }
+        val d = inflight.getOrPut(url) {
+            viewModelScope.async {
+                YtRepository.streamInfo(url).also { infoCache[url] = System.currentTimeMillis() to it }
+            }.also { job -> job.invokeOnCompletion { inflight.remove(url) } }
+        }
+        return d.await()
+    }
+
+    private fun findHint(url: String): VideoItem? = (related + feed + subsFeed).firstOrNull { it.url == url }
+
+    /** চলার সময়েই পরের সম্ভাব্য ভিডিওর তথ্য আগে থেকে এনে রাখা, যাতে "পরের"/অটোপ্লে প্রায় সাথে সাথে চলে */
+    private fun prefetchNext() = viewModelScope.launch {
+        delay(1500)
+        val next = if (queueItems.isNotEmpty() && queueIndex + 1 < queueItems.size) queueItems[queueIndex + 1].url
+        else related.firstOrNull { it.url !in sessionPlayed && it.url != current?.url }?.url
+        if (next != null) runCatching { infoFor(next) }
+    }
+
+    /** অ্যাপ খোলার পর (শুধু আনমিটার্ড নেটে) ফিডের প্রথম ভিডিও আগে থেকে এনে রাখা: এক্সট্রাক্টর গরম হয় ও প্রথম প্লে দ্রুত হয় */
+    private fun warmUp() = viewModelScope.launch {
+        val cm = ctx.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+        repeat(12) {
+            delay(1000)
+            val v = feed.firstOrNull { it.durationSec > 0 }
+            if (v != null) {
+                if (cm?.isActiveNetworkMetered == false) runCatching { infoFor(v.url) }
+                return@launch
+            }
+        }
+    }
+
+    private fun startPlay(url: String) {
+        current?.url?.let { prev ->
+            if (!goingBack && prev != url) { backStack.addLast(prev); while (backStack.size > 30) backStack.removeFirst() }
+        }
+        goingBack = false
+        sessionPlayed.add(url)
         error = null; opening = true
+        // ট্যাপ করার সাথে সাথেই প্লেয়ার পেজ খুলে স্কেলিটন দেখানো
+        loadingHint = findHint(url); loadingNew = true; expanded = true
         saveProgress(); recordSkip()
-        try {
-            val info = YtRepository.streamInfo(url)
-            val h = dao.historyOf(info.url)
-            val start = if (h != null && h.positionMs > 5_000 &&
-                (info.duration <= 0 || h.positionMs < info.duration * 1000 - 15_000)) h.positionMs else 0L
+        if (castName == null) player.pause()
+        playJob?.cancel()
+        val token = ++playToken
+        playJob = viewModelScope.launch {
+            try {
+                val info = infoFor(url)
+                sessionPlayed.add(info.url)
+                val h = dao.historyOf(info.url)
+                val start = if (h != null && h.positionMs > 5_000 &&
+                    (info.duration <= 0 || h.positionMs < info.duration * 1000 - 15_000)) h.positionMs else 0L
 
-            local = null; current = info; milestone = 0; segments = emptyList()
-            quality = defaultQuality(YtRepository.heights(info))
-            heights = YtRepository.heights(info)
-            related = filterBlocked(YtRepository.related(info))
-            likes = info.likeCount.takeIf { it >= 0 }; dislikes = null
+                val hs = YtRepository.heights(info)
+                val caps = YtRepository.captions(info)
+                val lang = prefs.captionLang
+                val capIdx = if (lang.isEmpty()) -1 else caps.indexOfFirst { it.languageTag == lang }
+                val q = defaultQuality(hs)
 
-            captions = YtRepository.captions(info)
-            val lang = prefs.captionLang
-            captionIndex = if (lang.isEmpty()) -1 else captions.indexOfFirst { it.languageTag == lang }
+                // আগে প্লেয়ার চালু, বাকি সব (সম্পর্কিত, মন্তব্য ইত্যাদি) পরে
+                local = null; current = info; milestone = 0; segments = emptyList()
+                quality = q; heights = hs
+                captions = caps; captionIndex = capIdx
+                likes = info.likeCount.takeIf { it >= 0 }; dislikes = null
+                player.setMediaSource(
+                    YtRepository.buildSource(info, if (q == 0) 1080 else q, caps.getOrNull(capIdx), audioOnly), start
+                )
+                applyTextSelection()
+                player.prepare(); player.playWhenReady = true
+                loadingNew = false
 
-            player.setMediaSource(
-                YtRepository.buildSource(info, if (quality == 0) 1080 else quality, captions.getOrNull(captionIndex), audioOnly), start
-            )
-            applyTextSelection()
-            player.prepare(); player.playWhenReady = true
-            expanded = true
-
-            if (castName != null) castLoad(info, start)
-            writeHistory(info, start)
-            boost(info, 0.5)
-            loadComments(url)
-            if (sponsorOn) loadSegments(info.id)
-            if (rydOn) loadRyd(info.id)
-        } catch (e: Exception) { error = e.message ?: L.t("ভিডিও চালানো যায়নি"); toast(error!!) }
-        opening = false
+                related = filterBlocked(YtRepository.related(info))
+                if (castName != null) castLoad(info, start)
+                writeHistory(info, start)
+                boost(info, 0.5)
+                loadComments(url)
+                if (sponsorOn) loadSegments(info.id)
+                if (rydOn) loadRyd(info.id)
+                prefetchNext()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                error = e.message ?: L.t("ভিডিও চালানো যায়নি"); toast(error!!)
+                if (token == playToken && !active) expanded = false
+            } finally {
+                if (token == playToken) { opening = false; loadingNew = false }
+            }
+        }
     }
 
     fun playLocal(d: DownloadEntity) {
@@ -439,6 +552,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun chooseCaptionColor(i: Int) { captionColorIndex = i; prefs.captionColor = i }
     fun chooseCaptionBg(i: Int) { captionBgIndex = i; prefs.captionBg = i }
     fun chooseSpeed(s: Float) { speed = s; player.setPlaybackSpeed(s) }
+    var muted by mutableStateOf(false); private set
+    fun toggleMute() { muted = !muted; player.volume = if (muted) 0f else 1f }
+    fun toggleAutoplay() { autoplay = !autoplay; prefs.autoplay = autoplay }
     fun cycleResize() { resizeMode = (resizeMode + 1) % 3; prefs.resizeMode = resizeMode }
 
     // ---------- ডিফল্ট কোয়ালিটি, লুপ, অডিও-অনলি, স্লিপ টাইমার ----------

@@ -9,7 +9,7 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
-        session = MediaSession.Builder(this, PlayerHolder.get(this)).build()
+        session = MediaSession.Builder(this, PlayerHolder.navPlayer(this)).build()
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = session

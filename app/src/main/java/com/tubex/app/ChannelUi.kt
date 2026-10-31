@@ -33,9 +33,9 @@ fun ChannelScreen(vm: MainViewModel) {
             Text(ch?.name ?: "", fontWeight = FontWeight.SemiBold, fontSize = 18.sp, maxLines = 1)
         }
         if (ch == null) {
-            Box(Modifier.fillMaxSize(), Alignment.Center) {
-                if (vm.channelLoading) CircularProgressIndicator(color = YtRed)
-                else Text(vm.error ?: L.t("চ্যানেল লোড করা যায়নি"), color = Sub)
+            if (vm.channelLoading) ChannelSkeleton()
+            else Box(Modifier.fillMaxSize(), Alignment.Center) {
+                Text(vm.error ?: L.t("চ্যানেল লোড করা যায়নি"), color = Sub)
             }
             return@Column
         }
