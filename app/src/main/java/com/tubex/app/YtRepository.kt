@@ -158,7 +158,33 @@ object YtRepository {
     private fun http() = DefaultHttpDataSource.Factory()
         .setUserAgent(MyDownloader.USER_AGENT).setAllowCrossProtocolRedirects(true)
 
-    private fun baseSource(info: StreamInfo, maxHeight: Int, audioOnly: Boolean): MediaSource {
+    // ---------- অডিও ট্র্যাক (ভাষা/ডাব) ----------
+    data class AudioTrack(val id: String?, val label: String)
+
+    fun audioTracks(info: StreamInfo): List<AudioTrack> =
+        info.audioStreams.filter { it.format == MediaFormat.M4A }
+            .groupBy { it.audioTrackId }
+            .map { (id, l) ->
+                val s = l.first()
+                AudioTrack(
+                    id,
+                    s.audioTrackName?.takeIf { it.isNotBlank() }
+                        ?: s.audioLocale?.displayLanguage?.takeIf { it.isNotBlank() }
+                        ?: id ?: "Default"
+                )
+            }
+
+    private fun pickAudio(info: StreamInfo, trackId: String?) =
+        info.audioStreams.filter { it.format == MediaFormat.M4A }.let { m4a ->
+            val pool = if (trackId != null) m4a.filter { it.audioTrackId == trackId }
+            else m4a.filter { it.audioTrackType?.name == "ORIGINAL" }
+            pool.ifEmpty { m4a }.maxByOrNull { it.averageBitrate }
+        }
+
+    /** ডিফল্টে যে ট্র্যাক চলবে (আসল অডিও) */
+    fun defaultAudioTrackId(info: StreamInfo): String? = pickAudio(info, null)?.audioTrackId
+
+    private fun baseSource(info: StreamInfo, maxHeight: Int, audioOnly: Boolean, trackId: String?): MediaSource {
         val http = http()
         val progressive = ProgressiveMediaSource.Factory(http)
 
@@ -167,8 +193,7 @@ object YtRepository {
         }
         val video = info.videoOnlyStreams
             .filter { it.format == MediaFormat.MPEG_4 && it.height <= maxHeight }.maxByOrNull { it.height }
-        val audio = info.audioStreams
-            .filter { it.format == MediaFormat.M4A }.maxByOrNull { it.averageBitrate }
+        val audio = pickAudio(info, trackId)
 
         if (audioOnly) {   // শুধু অডিও: ডেটা বাঁচে
             val a = audio ?: info.audioStreams.maxByOrNull { it.averageBitrate }
@@ -187,15 +212,17 @@ object YtRepository {
     }
 
     fun buildSource(
-        info: StreamInfo, maxHeight: Int = 1080, caption: SubtitlesStream? = null, audioOnly: Boolean = false
+        info: StreamInfo, maxHeight: Int = 1080, caption: SubtitlesStream? = null, audioOnly: Boolean = false,
+        audioTrackId: String? = null
     ): MediaSource {
-        val base = baseSource(info, maxHeight, audioOnly)
+        val base = baseSource(info, maxHeight, audioOnly, audioTrackId)
         val mime = caption?.let { mimeFor(it) }
         if (caption == null || mime == null) return base
         val cfg = MediaItem.SubtitleConfiguration.Builder(Uri.parse(caption.content))
             .setMimeType(mime).setLanguage(caption.languageTag)
             .setSelectionFlags(C.SELECTION_FLAG_DEFAULT).build()
-        return MergingMediaSource(base, SingleSampleMediaSource.Factory(http()).createMediaSource(cfg, C.TIME_UNSET))
+        return MergingMediaSource(base, SingleSampleMediaSource.Factory(http()).setTreatLoadErrorsAsEndOfStream(true)
+            .createMediaSource(cfg, C.TIME_UNSET))
     }
 
     /** Cast-এর জন্য: একটি মাত্র প্রগ্রেসিভ (muxed) স্ট্রিম */

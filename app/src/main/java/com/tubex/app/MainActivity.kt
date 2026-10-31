@@ -36,6 +36,9 @@ class MainActivity : ComponentActivity() {
         ) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         }
+        vm.requestStoragePermission = {
+            requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), 2)
+        }
         // ব্যাকগ্রাউন্ড সার্ভিস চালু/বাইন্ড করার জন্য
         val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
         controllerFuture = MediaController.Builder(this, token).buildAsync()
@@ -43,7 +46,7 @@ class MainActivity : ComponentActivity() {
 
         val coldStart = savedInstanceState == null
         setContent {
-            YtTheme(vm.themeIndex) {
+            YtTheme(vm.themeIndex, vm.themeAuto, vm.accentColor) {
                 var showSplash by rememberSaveable { mutableStateOf(coldStart) }
                 Box(Modifier.fillMaxSize()) {
                     YtApp(vm)
@@ -52,6 +55,11 @@ class MainActivity : ComponentActivity() {
             }
         }
         if (savedInstanceState == null) handleIntent(intent)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 2) vm.onStoragePermissionResult(grantResults.firstOrNull() == android.content.pm.PackageManager.PERMISSION_GRANTED)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -73,11 +81,18 @@ class MainActivity : ComponentActivity() {
 
     // হোম বাটন চাপলে (ভিডিও চলাকালীন) PiP
     override fun onUserLeaveHint() {
-        if (vm.active && vm.expanded && vm.player.isPlaying && Build.VERSION.SDK_INT >= 26) {
+        if (vm.pipOn && vm.active && vm.expanded && vm.player.isPlaying && Build.VERSION.SDK_INT >= 26) {
             enterPictureInPictureMode(
                 PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build()
             )
         }
+    }
+
+    // ব্যাকগ্রাউন্ড প্লে বন্ধ থাকলে অ্যাপ থেকে বেরোলে (PiP ছাড়া) প্লেব্যাক থামে
+    override fun onStop() {
+        super.onStop()
+        val inPip = Build.VERSION.SDK_INT >= 24 && isInPictureInPictureMode
+        if (!vm.backgroundPlay && !inPip && !isChangingConfigurations) vm.player.pause()
     }
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
@@ -86,6 +101,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        vm.requestStoragePermission = null
         controllerFuture?.let { MediaController.releaseFuture(it) }
         controller = null
         super.onDestroy()

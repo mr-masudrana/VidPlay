@@ -105,4 +105,46 @@ class Prefs(ctx: Context) {
     var floatMini: Boolean
         get() = sp.getBoolean("floatMini", true)
         set(v) { sp.edit().putBoolean("floatMini", v).apply() }
+
+    // ---------- নতুন সেটিংস ----------
+    /** সিস্টেম থিম অনুযায়ী অটো লাইট/ডার্ক */
+    var themeAuto: Boolean
+        get() = sp.getBoolean("themeAuto", false)
+        set(v) { sp.edit().putBoolean("themeAuto", v).apply() }
+
+    /** নিজের পছন্দের অ্যাকসেন্ট রঙ (ARGB); 0 = থিমের ডিফল্ট */
+    var accentColor: Int
+        get() = sp.getInt("accentColor", 0)
+        set(v) { sp.edit().putInt("accentColor", v).apply() }
+
+    /** ডেটা সেভার: কোয়ালিটি সর্বোচ্চ 360p, আগাম লোড বন্ধ */
+    var dataSaver: Boolean
+        get() = sp.getBoolean("dataSaver", false)
+        set(v) { sp.edit().putBoolean("dataSaver", v).apply() }
+
+    /** অ্যাপ ব্যাকগ্রাউন্ডে গেলেও প্লে চলবে কি না */
+    var backgroundPlay: Boolean
+        get() = sp.getBoolean("backgroundPlay", true)
+        set(v) { sp.edit().putBoolean("backgroundPlay", v).apply() }
+
+    var pipPlay: Boolean
+        get() = sp.getBoolean("pipPlay", true)
+        set(v) { sp.edit().putBoolean("pipPlay", v).apply() }
+
+    var wifiOnlyDownload: Boolean
+        get() = sp.getBoolean("wifiOnlyDownload", false)
+        set(v) { sp.edit().putBoolean("wifiOnlyDownload", v).apply() }
+
+    /** একসাথে কয়টা ডাউনলোড চলবে (1..3) */
+    var parallelDownloads: Int
+        get() = sp.getInt("parallelDownloads", 1).coerceIn(1, 3)
+        set(v) { sp.edit().putInt("parallelDownloads", v.coerceIn(1, 3)).apply() }
+
+    var saveSearchHistory: Boolean
+        get() = sp.getBoolean("saveSearchHistory", true)
+        set(v) { sp.edit().putBoolean("saveSearchHistory", v).apply() }
+
+    var saveWatchHistory: Boolean
+        get() = sp.getBoolean("saveWatchHistory", true)
+        set(v) { sp.edit().putBoolean("saveWatchHistory", v).apply() }
 }

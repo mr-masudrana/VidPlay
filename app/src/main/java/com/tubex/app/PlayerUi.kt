@@ -145,7 +145,7 @@ private fun PlayerBox(
     onFullscreen: () -> Unit, modifier: Modifier
 ) {
     val ctx = LocalContext.current
-    var controls by remember { mutableStateOf(true) }
+    var controls by remember { mutableStateOf(false) }   // কন্ট্রোলার দেখা গেলে তবেই ওভারলে দেখাবে
     var showSettings by remember { mutableStateOf(false) }
     var showCaptions by remember { mutableStateOf(false) }
     var hud by remember { mutableStateOf<String?>(null) }
@@ -167,6 +167,7 @@ private fun PlayerBox(
                     setShowNextButton(true); setShowPreviousButton(true)
                     // কন্ট্রোলারের নিচের ডানের ডিফল্ট সেটিংস গিয়ার বাদ (সেটিংস এখন ওপরে ডানে)
                     findViewById<View>(androidx.media3.ui.R.id.exo_settings)?.visibility = View.GONE
+                    controls = isControllerFullyVisible
                     setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { v ->
                         controls = v == View.VISIBLE
                     })
@@ -224,6 +225,12 @@ private fun PlayerBox(
             Row(Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (!landscape) PlayerIconButton(Icons.Rounded.KeyboardArrowDown) { vm.minimize() }
                 Spacer(Modifier.weight(1f))
+                if (vm.captions.isNotEmpty()) {
+                    PlayerIconButton(
+                        Icons.Rounded.ClosedCaption, tint = if (vm.captionIndex >= 0) YtRed else Color.White
+                    ) { showCaptions = true }
+                    Spacer(Modifier.width(8.dp))
+                }
                 if (vm.castAvailable && vm.current != null) PlayerIconButton(
                     if (vm.castName == null) Icons.Rounded.Cast else Icons.Rounded.CastConnected
                 ) { if (vm.castName == null) vm.showCastChooser(ctx) else vm.castStop() }
@@ -238,9 +245,6 @@ private fun PlayerBox(
                 Modifier.padding(end = 8.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                if (vm.captions.isNotEmpty()) PlayerIconButton(
-                    Icons.Rounded.ClosedCaption, tint = if (vm.captionIndex >= 0) YtRed else Color.White
-                ) { showCaptions = true }
                 PlayerIconButton(if (vm.muted) Icons.Rounded.VolumeOff else Icons.Rounded.VolumeUp) {
                     vm.toggleMute()
                     hud = if (vm.muted) "🔇 " + L.t("মিউট") else "🔊 " + L.t("আনমিউট")
@@ -348,12 +352,7 @@ private fun Details(vm: MainViewModel) {
                 Text(vm.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 if (info != null) {
                     StatsLine(info, vm.likes, vm.dislikes, Modifier.padding(top = 6.dp))
-                    val preview = remember(info) { TextUtil.clean(info.description?.content) }
-                    if (preview.isNotBlank()) Text(
-                        preview, color = Sub, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = 6.dp)
-                    )
-                    Text(L.t("আরও দেখুন"), color = Sub, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 2.dp))
+                    Text(L.t("আরও দেখুন"), color = Sub, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp))
                 } else Text(L.t("অফলাইন (ডাউনলোড করা)"), color = Sub, fontSize = 12.sp)
             }
         }
@@ -565,6 +564,13 @@ private fun PlayerSettingsSheet(vm: MainViewModel, onDismiss: () -> Unit) {
                 OptionRow(L.t("ভিডিও কোয়ালিটি"), listOf(0) + vm.heights, vm.quality, { if (it == 0) "Auto" else "${it}p" }) {
                     vm.selectQuality(it)
                 }
+            }
+
+            if (vm.current != null && vm.audioTracks.size > 1) {
+                OptionRow(
+                    L.t("অডিও ট্র্যাক"), vm.audioTracks.map { it.id }, vm.audioTrackId,
+                    { id -> vm.audioTracks.firstOrNull { it.id == id }?.label ?: "" }
+                ) { vm.chooseAudioTrack(it) }
             }
 
             OptionRow(

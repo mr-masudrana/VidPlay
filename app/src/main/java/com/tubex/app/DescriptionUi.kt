@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -98,9 +99,9 @@ fun DescriptionSheet(vm: MainViewModel, info: StreamInfo, onDismiss: () -> Unit)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss, containerColor = Chip,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        sheetState = rememberModalBottomSheetState()
     ) {
-        LazyColumn(Modifier.fillMaxWidth()) {
+        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 520.dp)) {
             item {
                 Column(Modifier.padding(horizontal = 16.dp)) {
                     Text(L.t("বিবরণ"), fontWeight = FontWeight.Bold, fontSize = 16.sp)

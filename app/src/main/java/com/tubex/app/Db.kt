@@ -83,6 +83,7 @@ interface AppDao {
     @Query("UPDATE downloads SET state = 0 WHERE id = :id AND state IN (2, 4)") suspend fun resumeOne(id: Long)
     @Query("UPDATE downloads SET state = 0 WHERE state IN (2, 4)") suspend fun resumeAll()
     @Query("UPDATE downloads SET state = 2 WHERE state IN (1, 5)") suspend fun resetInterrupted()
+    @Query("UPDATE downloads SET state = 0 WHERE id = :id AND state = 1") suspend fun requeueRunning(id: Long): Int
 
     // ইতিহাস
     @Query("SELECT * FROM history ORDER BY watchedAt DESC LIMIT 100") fun history(): Flow<List<HistoryEntity>>
@@ -90,6 +91,7 @@ interface AppDao {
     @Query("SELECT * FROM history WHERE url = :url") suspend fun historyOf(url: String): HistoryEntity?
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsertHistory(h: HistoryEntity)
     @Query("DELETE FROM history") suspend fun clearHistory()
+    @Query("DELETE FROM history WHERE url = :url") suspend fun deleteHistory(url: String)
     @Query("SELECT url FROM history WHERE durationSec > 0 AND positionMs >= durationSec * 900")
     suspend fun watchedUrls(): List<String>
 
@@ -129,6 +131,8 @@ interface AppDao {
     @Insert suspend fun addPlaylistItem(i: PlaylistItemEntity)
     @Query("SELECT COUNT(*) FROM playlist_items WHERE playlistId = :pid AND url = :url") suspend fun countItem(pid: Long, url: String): Int
     @Query("DELETE FROM playlist_items WHERE id = :id") suspend fun removePlaylistItem(id: Long)
+    @Query("UPDATE playlists SET name = :name WHERE id = :id") suspend fun renamePlaylist(id: Long, name: String)
+    @Query("UPDATE playlist_items SET addedAt = :at WHERE id = :id") suspend fun setItemOrder(id: Long, at: Long)
 }
 
 @Database(

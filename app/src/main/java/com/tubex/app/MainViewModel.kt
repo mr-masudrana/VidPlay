@@ -127,6 +127,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var dislikes by mutableStateOf<Long?>(null); private set
     var captions by mutableStateOf<List<SubtitlesStream>>(emptyList()); private set
     var captionIndex by mutableStateOf(-1); private set     // -1 = বন্ধ
+    var audioTracks by mutableStateOf<List<YtRepository.AudioTrack>>(emptyList()); private set
+    var audioTrackId by mutableStateOf<String?>(null); private set
 
     // মন্তব্য
     var comments by mutableStateOf<List<CommentItem>>(emptyList()); private set
@@ -149,6 +151,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var contextInterests by mutableStateOf<List<Pair<String, Double>>>(emptyList()); private set
     var langMode by mutableStateOf(prefs.lang); private set
     var floatingMini by mutableStateOf(prefs.floatMini); private set
+    var themeAuto by mutableStateOf(prefs.themeAuto); private set
+    var accentColor by mutableStateOf(prefs.accentColor); private set
+    var dataSaver by mutableStateOf(prefs.dataSaver); private set
+    var backgroundPlay by mutableStateOf(prefs.backgroundPlay); private set
+    var pipOn by mutableStateOf(prefs.pipPlay); private set
+    var wifiOnlyDl by mutableStateOf(prefs.wifiOnlyDownload); private set
+    var parallelDl by mutableStateOf(prefs.parallelDownloads); private set
+    var saveSearchHist by mutableStateOf(prefs.saveSearchHistory); private set
+    var saveWatchHist by mutableStateOf(prefs.saveWatchHistory); private set
     var pipX by mutableStateOf(Float.NaN)       // ভাসমান প্লেয়ারের অবস্থান (NaN = ডিফল্ট কোণ)
     var pipY by mutableStateOf(Float.NaN)
 
@@ -212,7 +223,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 if (state == Player.STATE_ENDED && !advanceQueue() && autoplay) playRelatedNext()
             }
-            override fun onPlayerError(e: PlaybackException) { error = e.message ?: L.t("প্লেব্যাক এরর") }
+            override fun onPlayerError(e: PlaybackException) {
+                val info = current
+                if (info != null && captionIndex >= 0) {
+                    // সাবটাইটেল লোডে সমস্যা: সাবটাইটেল বন্ধ করে একই জায়গা থেকে ভিডিও চালিয়ে যাই
+                    captionIndex = -1; prefs.captionLang = ""
+                    val pos = player.currentPosition
+                    rebuild(info, pos); player.playWhenReady = true
+                    toast(L.t("সাবটাইটেল লোড হয়নি, বন্ধ করা হলো"))
+                    return
+                }
+                error = e.message ?: L.t("প্লেব্যাক এরর")
+            }
         }
         playerListener = pl; player.addListener(pl)
         // Chromecast (Google Play Services না থাকলে নীরবে বাদ)
@@ -445,6 +467,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** চলার সময়েই পরের সম্ভাব্য ভিডিওর তথ্য আগে থেকে এনে রাখা, যাতে "পরের"/অটোপ্লে প্রায় সাথে সাথে চলে */
     private fun prefetchNext() = viewModelScope.launch {
+        if (dataSaver) return@launch
         delay(1500)
         val next = if (queueItems.isNotEmpty() && queueIndex + 1 < queueItems.size) queueItems[queueIndex + 1].url
         else related.firstOrNull { it.url !in sessionPlayed && it.url != current?.url }?.url
@@ -453,6 +476,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** অ্যাপ খোলার পর (শুধু আনমিটার্ড নেটে) ফিডের প্রথম ভিডিও আগে থেকে এনে রাখা: এক্সট্রাক্টর গরম হয় ও প্রথম প্লে দ্রুত হয় */
     private fun warmUp() = viewModelScope.launch {
+        if (dataSaver) return@launch
         val cm = ctx.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
         repeat(12) {
             delay(1000)
@@ -495,9 +519,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 local = null; current = info; milestone = 0; segments = emptyList()
                 quality = q; heights = hs
                 captions = caps; captionIndex = capIdx
+                audioTracks = YtRepository.audioTracks(info); audioTrackId = YtRepository.defaultAudioTrackId(info)
                 likes = info.likeCount.takeIf { it >= 0 }; dislikes = null
                 player.setMediaSource(
-                    YtRepository.buildSource(info, if (q == 0) 1080 else q, caps.getOrNull(capIdx), audioOnly), start
+                    YtRepository.buildSource(info, if (q == 0) 1080 else q, caps.getOrNull(capIdx), audioOnly, audioTrackId), start
                 )
                 applyTextSelection()
                 player.prepare(); player.playWhenReady = true
@@ -527,6 +552,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         clearQueue()
         current = null; local = d; related = emptyList(); comments = emptyList(); heights = emptyList()
         likes = null; dislikes = null; segments = emptyList(); captions = emptyList(); captionIndex = -1
+        audioTracks = emptyList(); audioTrackId = null
         applyTextSelection()
         player.setMediaItem(MediaItem.fromUri(Uri.fromFile(File(d.path))))
         player.prepare(); player.playWhenReady = true
@@ -535,7 +561,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun rebuild(info: StreamInfo, pos: Long) {
         player.setMediaSource(
-            YtRepository.buildSource(info, if (quality == 0) 1080 else quality, captions.getOrNull(captionIndex), audioOnly), pos
+            YtRepository.buildSource(info, if (quality == 0) 1080 else quality, captions.getOrNull(captionIndex), audioOnly, audioTrackId), pos
         )
         applyTextSelection()
         player.prepare()
@@ -562,6 +588,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         rebuild(info, player.currentPosition)
     }
 
+    fun chooseAudioTrack(id: String?) {
+        val info = current ?: return
+        audioTrackId = id
+        rebuild(info, player.currentPosition)
+    }
+
     fun chooseCaptionSize(i: Int) { captionSizeIndex = i; prefs.captionSize = i }
     fun chooseCaptionColor(i: Int) { captionColorIndex = i; prefs.captionColor = i }
     fun chooseCaptionBg(i: Int) { captionBgIndex = i; prefs.captionBg = i }
@@ -574,7 +606,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // ---------- ডিফল্ট কোয়ালিটি, লুপ, অডিও-অনলি, স্লিপ টাইমার ----------
     private fun defaultQuality(available: List<Int>): Int {
         val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val target = if (cm.isActiveNetworkMetered) qualityMobile else qualityWifi
+        var target = if (cm.isActiveNetworkMetered) qualityMobile else qualityWifi
+        // ডেটা সেভার: সব নেটওয়ার্কে সর্বোচ্চ 360p
+        if (dataSaver) target = if (target == 0) 360 else minOf(target, 360)
         if (target == 0 || available.isEmpty()) return 0
         return available.filter { it <= target }.maxOrNull() ?: available.minOrNull() ?: 0
     }
@@ -624,8 +658,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val t = q.trim()
         if (t.isEmpty()) return
         query = t; showSuggestions = false
-        searchHistory = (listOf(t) + searchHistory.filter { it != t }).take(20)
-        prefs.searchHistory = searchHistory
+        if (saveSearchHist) {
+            searchHistory = (listOf(t) + searchHistory.filter { it != t }).take(20)
+            prefs.searchHistory = searchHistory
+        }
         viewModelScope.launch { Recommender.boostQuery(dao, t, 0.8) }
         load(t)
     }
@@ -691,6 +727,77 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun chooseLang(m: Int) { langMode = m; prefs.lang = m; L.apply(m) }
     fun toggleFloatingMini(v: Boolean) { floatingMini = v; prefs.floatMini = v }
 
+    // ---------- নতুন সেটিংস ----------
+    fun applyThemeAuto(v: Boolean) { themeAuto = v; prefs.themeAuto = v }
+    /** 0 = থিমের ডিফল্ট রঙ */
+    fun chooseAccent(argb: Int) { accentColor = argb; prefs.accentColor = argb }
+    fun applyDataSaver(v: Boolean) { dataSaver = v; prefs.dataSaver = v }
+    fun applyBackgroundPlay(v: Boolean) { backgroundPlay = v; prefs.backgroundPlay = v }
+    fun setPip(v: Boolean) { pipOn = v; prefs.pipPlay = v }
+    fun applyAutoplay(v: Boolean) { autoplay = v; prefs.autoplay = v }
+    fun setWifiOnlyDownload(v: Boolean) {
+        wifiOnlyDl = v; prefs.wifiOnlyDownload = v
+        if (downloads.value.any { it.state == 0 || it.state == 1 }) DownloadEngine.kick(ctx)
+    }
+    fun chooseParallelDownloads(n: Int) { parallelDl = n; prefs.parallelDownloads = n }
+    fun setSaveSearchHistory(v: Boolean) { saveSearchHist = v; prefs.saveSearchHistory = v }
+    fun setSaveWatchHistory(v: Boolean) { saveWatchHist = v; prefs.saveWatchHistory = v }
+    fun clearSearchHistory() {
+        searchHistory = emptyList(); prefs.searchHistory = searchHistory
+        toast(L.t("সার্চ ইতিহাস মুছে গেছে"))
+    }
+    fun deleteHistoryItem(url: String) = viewModelScope.launch { dao.deleteHistory(url) }
+
+    // ---------- লাইব্রেরি: প্লেলিস্ট ----------
+    fun renamePlaylist(id: Long, name: String) {
+        val t = name.trim()
+        if (t.isNotEmpty()) viewModelScope.launch { dao.renamePlaylist(id, t) }
+    }
+
+    /** প্লেলিস্টের আইটেম ওপরে/নিচে সরানো: পুরো ক্রম নতুন করে লেখা হয় */
+    fun movePlaylistItem(list: List<PlaylistItemEntity>, from: Int, to: Int) {
+        if (from !in list.indices || to !in list.indices || from == to) return
+        val m = list.toMutableList()
+        m.add(to, m.removeAt(from))
+        viewModelScope.launch { m.forEachIndexed { i, e -> dao.setItemOrder(e.id, i + 1L) } }
+    }
+
+    // ---------- ডাউনলোড: গ্যালারিতে সেভ ও শেয়ার ----------
+    private var pendingSave: DownloadEntity? = null
+    /** MainActivity বসায়: পুরনো অ্যান্ড্রয়েডে স্টোরেজ পারমিশন চাওয়ার জন্য */
+    var requestStoragePermission: (() -> Unit)? = null
+
+    fun saveToGallery(d: DownloadEntity) {
+        if (android.os.Build.VERSION.SDK_INT < 29 &&
+            ctx.checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingSave = d
+            requestStoragePermission?.invoke()
+            return
+        }
+        viewModelScope.launch {
+            val r = withContext(Dispatchers.IO) { runCatching { MediaExport.save(ctx, d) } }
+            toast(if (r.isSuccess) L.t("গ্যালারিতে সেভ হয়েছে") else L.f("সেভ ব্যর্থ: {0}", r.exceptionOrNull()?.message))
+        }
+    }
+
+    fun onStoragePermissionResult(granted: Boolean) {
+        val d = pendingSave; pendingSave = null
+        if (d == null) return
+        if (granted) saveToGallery(d) else toast(L.t("স্টোরেজ পারমিশন ছাড়া সেভ করা যাচ্ছে না"))
+    }
+
+    fun shareDownload(d: DownloadEntity) {
+        runCatching { MediaExport.share(ctx, d) }.onFailure { toast(L.f("শেয়ার ব্যর্থ: {0}", it.message)) }
+    }
+
+    fun deleteDownloads(list: List<DownloadEntity>) = viewModelScope.launch {
+        list.forEach { d ->
+            if (local?.id == d.id) close()
+            DownloadEngine.remove(dao, d)
+        }
+    }
+
     fun expand() { if (active) expanded = true }
     fun minimize() { expanded = false }
     fun close() {
@@ -740,6 +847,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- হিস্টরি ও রিকমেন্ডেশন ----------
     private fun writeHistory(info: StreamInfo, pos: Long) = viewModelScope.launch {
+        if (!saveWatchHist) return@launch
         dao.upsertHistory(
             HistoryEntity(
                 url = info.url, title = info.name, channel = info.uploaderName ?: "",
@@ -959,6 +1067,10 @@ try {
                 .put("autoplay", autoplay).put("notifyEnabled", notifyOn).put("notifyHours", notifyHours)
                 .put("dearrowTitles", prefs.dearrowTitles).put("dearrowThumbs", prefs.dearrowThumbs)
                 .put("floatMini", floatingMini)
+                .put("themeAuto", themeAuto).put("accentColor", accentColor).put("dataSaver", dataSaver)
+                .put("backgroundPlay", backgroundPlay).put("pipPlay", pipOn).put("wifiOnlyDownload", wifiOnlyDl)
+                .put("parallelDownloads", parallelDl).put("saveSearchHistory", saveSearchHist)
+                .put("saveWatchHistory", saveWatchHist)
             val root = ProfileBackup.build(dao, prefsJson)
             withContext(Dispatchers.IO) {
                 ctx.contentResolver.openOutputStream(uri, "wt")!!.bufferedWriter().use { it.write(root.toString(2)) }
@@ -993,6 +1105,15 @@ try {
                 toggleDearrowTitles(it.optBoolean("dearrowTitles", prefs.dearrowTitles))
                 toggleDearrowThumbs(it.optBoolean("dearrowThumbs", prefs.dearrowThumbs))
                 toggleFloatingMini(it.optBoolean("floatMini", floatingMini))
+                applyThemeAuto(it.optBoolean("themeAuto", themeAuto))
+                chooseAccent(it.optInt("accentColor", accentColor))
+                applyDataSaver(it.optBoolean("dataSaver", dataSaver))
+                applyBackgroundPlay(it.optBoolean("backgroundPlay", backgroundPlay))
+                setPip(it.optBoolean("pipPlay", pipOn))
+                setWifiOnlyDownload(it.optBoolean("wifiOnlyDownload", wifiOnlyDl))
+                chooseParallelDownloads(it.optInt("parallelDownloads", parallelDl))
+                setSaveSearchHistory(it.optBoolean("saveSearchHistory", saveSearchHist))
+                setSaveWatchHistory(it.optBoolean("saveWatchHistory", saveWatchHist))
             }
             toast(L.t("প্রোফাইল ইম্পোর্ট হয়েছে"))
             loadInterests()

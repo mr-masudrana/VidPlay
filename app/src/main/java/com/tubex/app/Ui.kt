@@ -75,8 +75,16 @@ val YtRed: Color
     @Composable get() = LocalPalette.current.accent
 
 @Composable
-fun YtTheme(index: Int, content: @Composable () -> Unit) {
-    val p = Palettes[index.coerceIn(0, Palettes.lastIndex)]
+fun YtTheme(index: Int, auto: Boolean = false, accent: Int = 0, content: @Composable () -> Unit) {
+    val sysDark = androidx.compose.foundation.isSystemInDarkTheme()
+    val chosen = Palettes[index.coerceIn(0, Palettes.lastIndex)]
+    // অটো মোডে: ফোন ডার্ক হলে ডার্ক প্যালেট, লাইট হলে লাইট প্যালেট (পছন্দের প্যালেট মিললে সেটাই)
+    val base = if (!auto) chosen else if (sysDark) {
+        if (!chosen.light) chosen else Palettes[0]
+    } else {
+        if (chosen.light) chosen else Palettes[2]
+    }
+    val p = if (accent != 0) base.copy(accent = Color(accent)) else base
     val on = if (p.light) Color.Black else Color.White
     val scheme = (if (p.light) lightColorScheme(
         primary = p.accent, background = p.bg, surface = p.bg, onBackground = on, onSurface = on

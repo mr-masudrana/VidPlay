@@ -2,6 +2,8 @@ package com.tubex.app
 
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -9,6 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,6 +23,7 @@ import org.schabi.newpipe.extractor.stream.StreamInfo
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 /**
@@ -32,14 +36,32 @@ object DownloadEngine {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val client = OkHttpClient.Builder().readTimeout(30, TimeUnit.SECONDS).build()
     private var loop: Job? = null
-    private var current: Job? = null
-    @Volatile private var currentId = -1L
+    private val jobs = ConcurrentHashMap<Long, Job>()
+    private val prog = ConcurrentHashMap<Long, Int>()
+    private val titles = ConcurrentHashMap<Long, String>()
 
     /** সার্ভিস চালু রাখার সংকেত */
     val active = MutableStateFlow(false)
-    /** নোটিফিকেশনের জন্য: (শিরোনাম, শতাংশ) */
+    /** নোটিফিকেশনের জন্য: (শিরোনাম, শতাংশ; -1 = অনির্দিষ্ট) */
     val status = MutableStateFlow<Pair<String, Int>?>(null)
     val isActive: Boolean get() = active.value
+
+    private fun publish() {
+        val ids = prog.keys.toList()
+        status.value = when {
+            ids.isEmpty() -> null
+            ids.size == 1 -> (titles[ids[0]] ?: "") to (prog[ids[0]] ?: 0)
+            else -> L.f("{0} টি ডাউনলোড চলছে", ids.size) to (ids.sumOf { prog[it] ?: 0 } / ids.size)
+        }
+    }
+
+    /** ওয়াইফাই/ইথারনেটে আছে কি না (নেটওয়ার্ক না থাকলেও false) */
+    private fun onUnmetered(ctx: Context): Boolean {
+        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+        return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+    }
 
     @Synchronized
     fun kick(ctx: Context) {
@@ -49,13 +71,35 @@ object DownloadEngine {
         if (loop?.isActive == true) return
         loop = scope.launch {
             val dao = AppDb.get(app).dao()
+            val prefs = Prefs(app)
             while (true) {
-                val next = dao.nextQueued() ?: break
-                currentId = next.id
-                val job = launch { runOne(dao, next) }
-                current = job
-                job.join()
-                currentId = -1
+                jobs.values.removeAll { !it.isActive }
+
+                // "শুধু ওয়াইফাইয়ে ডাউনলোড": মোবাইল ডেটায় চলা ডাউনলোড কিউতে ফিরে অপেক্ষা করে (আংশিক ফাইল থেকে যায়)
+                if (prefs.wifiOnlyDownload && !onUnmetered(app)) {
+                    for ((id, job) in jobs.entries.toList()) {
+                        if (dao.requeueRunning(id) > 0) job.cancel()
+                    }
+                    if (jobs.isEmpty() && dao.nextQueued() == null) break
+                    if (jobs.isEmpty()) status.value = L.t("ওয়াইফাইয়ের অপেক্ষায়") to -1
+                    delay(3000)
+                    continue
+                }
+
+                if (jobs.size < prefs.parallelDownloads) {
+                    val next = dao.nextQueued()
+                    if (next != null) {
+                        if (dao.markRunning(next.id) > 0) {
+                            jobs[next.id] = launch {
+                                try { runOne(dao, next) }
+                                finally { prog.remove(next.id); titles.remove(next.id); publish() }
+                            }
+                        }
+                        continue
+                    }
+                }
+                if (jobs.isEmpty() && dao.nextQueued() == null) break
+                delay(500)
             }
             status.value = null
             synchronized(DownloadEngine) { loop = null; active.value = false }
@@ -65,32 +109,31 @@ object DownloadEngine {
 
     suspend fun pause(dao: AppDao, id: Long) {
         dao.pauseOne(id)
-        if (currentId == id) current?.cancel()
+        jobs[id]?.cancel()
     }
 
     suspend fun pauseAll(dao: AppDao) {
         dao.pauseAll()
-        current?.cancel()
+        jobs.values.forEach { it.cancel() }
     }
 
     suspend fun resume(ctx: Context, dao: AppDao, id: Long) { dao.resumeOne(id); kick(ctx) }
     suspend fun resumeAll(ctx: Context, dao: AppDao) { dao.resumeAll(); kick(ctx) }
 
     suspend fun remove(dao: AppDao, d: DownloadEntity) {
-        if (currentId == d.id) current?.cancelAndJoin()
+        jobs[d.id]?.cancelAndJoin()
         dao.removeDownload(d)
         listOf("", ".part", ".v.part", ".a.part", ".tmp").forEach { File(d.path + it).delete() }
     }
 
     // ---------- একটি আইটেম ----------
     private suspend fun runOne(dao: AppDao, d: DownloadEntity) {
-        if (dao.markRunning(d.id) == 0) return   // এর মধ্যে থামানো/মোছা হয়েছে
-        status.value = d.title to 0
+        titles[d.id] = d.title; prog[d.id] = 0; publish()
         var lastWrite = 0L
 
         suspend fun report(frac: Float) {
             val p = (frac * 1000).toInt().coerceIn(0, 1000)
-            status.value = d.title to p / 10
+            prog[d.id] = p / 10; publish()
             val now = System.currentTimeMillis()
             if (now - lastWrite > 1000) { lastWrite = now; dao.setProgress(d.id, p) }
         }
@@ -119,7 +162,7 @@ object DownloadEngine {
                 fetch(a.content, ap) { h, t -> report(0.92f + 0.08f * frac(h, t)) }
 
                 dao.setState(d.id, 5)            // মার্জ হচ্ছে
-                status.value = d.title to 100
+                prog[d.id] = 100; publish()
                 val tmp = File(d.path + ".tmp")
                 tmp.delete()
                 Muxer.mux(vp, ap, tmp, d.path.endsWith(".webm"))
