@@ -2,7 +2,6 @@ package com.tubex.app
 
 import android.app.Application
 import android.content.Context
-import android.database.sqlite.SQLiteDatabase
 import android.net.ConnectivityManager
 import android.net.Uri
 import android.widget.Toast
@@ -43,7 +42,6 @@ import org.schabi.newpipe.extractor.Page
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.SubtitlesStream
 import java.io.File
-import java.util.zip.ZipInputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
@@ -87,6 +85,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var loop by mutableStateOf(false); private set
     var sleepEnd by mutableStateOf(0L); private set
     var sleepAtEnd by mutableStateOf(false); private set
+    var sleepMin by mutableStateOf(0); private set      // নির্বাচিত স্লিপ টাইমার (চিপ হাইলাইটের জন্য)
     var positionMs by mutableStateOf(0L); private set
     var durationMs by mutableStateOf(0L); private set
 
@@ -171,6 +170,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val title get() = current?.name ?: local?.title ?: ""
     val channelName get() = current?.uploaderName ?: ""
 
+    private var playerListener: Player.Listener? = null
+    private val castExecutor = Executors.newSingleThreadExecutor()
+    private var castClientRef: RemoteMediaClient? = null
+    private var castCb: RemoteMediaClient.Callback? = null
+
     private val castListener = object : SessionManagerListener<CastSession> {
         override fun onSessionStarting(s: CastSession) {}
         override fun onSessionStarted(s: CastSession, id: String) { onCastConnected(s) }
@@ -196,7 +200,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             override fun next() { playNextVideo() }
             override fun prev() { playPreviousVideo() }
         }
-        player.addListener(object : Player.Listener {
+        val pl = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
                 if (!playing) saveProgress()
@@ -204,15 +208,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             override fun onPlaybackStateChanged(state: Int) {
                 // প্লেলিস্ট/কিউ: শেষ হলে পরেরটা
                 if (state == Player.STATE_ENDED && sleepAtEnd) {
-                    sleepAtEnd = false; toast(L.t("স্লিপ টাইমার: প্লেব্যাক বন্ধ")); return
+                    sleepAtEnd = false; sleepMin = 0; toast(L.t("স্লিপ টাইমার: প্লেব্যাক বন্ধ")); return
                 }
                 if (state == Player.STATE_ENDED && !advanceQueue() && autoplay) playRelatedNext()
             }
             override fun onPlayerError(e: PlaybackException) { error = e.message ?: L.t("প্লেব্যাক এরর") }
-        })
+        }
+        playerListener = pl; player.addListener(pl)
         // Chromecast (Google Play Services না থাকলে নীরবে বাদ)
         runCatching {
-            CastContext.getSharedInstance(app, Executors.newSingleThreadExecutor())
+            CastContext.getSharedInstance(app, castExecutor)
                 .addOnSuccessListener { cc ->
                     castContext = cc; castAvailable = true
                     cc.sessionManager.addSessionManagerListener(castListener, CastSession::class.java)
@@ -224,7 +229,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             while (true) {
                 delay(500)
                 if (sleepEnd > 0 && System.currentTimeMillis() >= sleepEnd) {
-                    sleepEnd = 0; player.pause(); castClient()?.pause(); toast(L.t("স্লিপ টাইমার: প্লেব্যাক বন্ধ"))
+                    sleepEnd = 0; sleepMin = 0; player.pause(); castClient()?.pause(); toast(L.t("স্লিপ টাইমার: প্লেব্যাক বন্ধ"))
                 }
                 if (active) { positionMs = player.currentPosition; durationMs = player.duration.coerceAtLeast(0L) }
                 val info = current
@@ -245,6 +250,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (n % 20 == 0) saveProgress()
             }
         }
+    }
+
+    override fun onCleared() {
+        playerListener?.let { player.removeListener(it) }
+        PlayerHolder.navigator = null
+        castCb?.let { castClientRef?.unregisterCallback(it) }
+        castContext?.sessionManager?.removeSessionManagerListener(castListener, CastSession::class.java)
+        castExecutor.shutdown()
+        super.onCleared()
     }
 
     private fun toast(s: String) = Toast.makeText(ctx, s, Toast.LENGTH_SHORT).show()
@@ -583,6 +597,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** min: 0 = বন্ধ, -1 = ভিডিও শেষে, নাহলে মিনিট */
     fun startSleep(min: Int) {
+        sleepMin = min
         when {
             min == 0 -> { sleepEnd = 0; sleepAtEnd = false }
             min < 0 -> { sleepEnd = 0; sleepAtEnd = true }
@@ -691,9 +706,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun onCastConnected(s: CastSession) {
         castName = s.castDevice?.friendlyName ?: "Cast"
         val client = s.remoteMediaClient ?: return
-        client.registerCallback(object : RemoteMediaClient.Callback() {
+        castCb?.let { castClientRef?.unregisterCallback(it) }
+        val cb = object : RemoteMediaClient.Callback() {
             override fun onStatusUpdated() { castPlaying = client.isPlaying }
-        })
+        }
+        client.registerCallback(cb); castClientRef = client; castCb = cb
         current?.let { castLoad(it, player.currentPosition) }
     }
 
@@ -938,6 +955,10 @@ try {
             val prefsJson = JSONObject().put("theme", themeIndex).put("sponsorblock", sponsorOn).put("ryd", rydOn)
                 .put("captionSize", captionSizeIndex).put("captionLang", prefs.captionLang)
                 .put("qualityWifi", qualityWifi).put("qualityMobile", qualityMobile).put("skipSilence", skipSilence)
+                .put("captionColor", captionColorIndex).put("captionBg", captionBgIndex).put("lang", langMode)
+                .put("autoplay", autoplay).put("notifyEnabled", notifyOn).put("notifyHours", notifyHours)
+                .put("dearrowTitles", prefs.dearrowTitles).put("dearrowThumbs", prefs.dearrowThumbs)
+                .put("floatMini", floatingMini)
             val root = ProfileBackup.build(dao, prefsJson)
             withContext(Dispatchers.IO) {
                 ctx.contentResolver.openOutputStream(uri, "wt")!!.bufferedWriter().use { it.write(root.toString(2)) }
@@ -963,6 +984,15 @@ try {
                 chooseDefaultQuality(false, it.optInt("qualityMobile", qualityMobile))
                 toggleSkipSilence(it.optBoolean("skipSilence", skipSilence))
                 prefs.captionLang = it.optString("captionLang", "")
+                chooseCaptionColor(it.optInt("captionColor", captionColorIndex))
+                chooseCaptionBg(it.optInt("captionBg", captionBgIndex))
+                chooseLang(it.optInt("lang", langMode))
+                if (it.optBoolean("autoplay", autoplay) != autoplay) toggleAutoplay()
+                toggleNotify(it.optBoolean("notifyEnabled", notifyOn))
+                chooseNotifyHours(it.optInt("notifyHours", notifyHours))
+                toggleDearrowTitles(it.optBoolean("dearrowTitles", prefs.dearrowTitles))
+                toggleDearrowThumbs(it.optBoolean("dearrowThumbs", prefs.dearrowThumbs))
+                toggleFloatingMini(it.optBoolean("floatMini", floatingMini))
             }
             toast(L.t("প্রোফাইল ইম্পোর্ট হয়েছে"))
             loadInterests()

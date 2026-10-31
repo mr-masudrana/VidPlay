@@ -25,18 +25,21 @@ import androidx.media3.session.SessionToken
 class MainActivity : ComponentActivity() {
     private val vm: MainViewModel by viewModels()
     private var controller: MediaController? = null
+    private var controllerFuture: com.google.common.util.concurrent.ListenableFuture<MediaController>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
 
-        if (Build.VERSION.SDK_INT >= 33) {
+        if (Build.VERSION.SDK_INT >= 33 && savedInstanceState == null &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         }
         // ব্যাকগ্রাউন্ড সার্ভিস চালু/বাইন্ড করার জন্য
         val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
-        MediaController.Builder(this, token).buildAsync()
-            .also { f -> f.addListener({ controller = f.get() }, mainExecutor) }
+        controllerFuture = MediaController.Builder(this, token).buildAsync()
+            .also { f -> f.addListener({ controller = runCatching { f.get() }.getOrNull() }, mainExecutor) }
 
         val coldStart = savedInstanceState == null
         setContent {
@@ -83,7 +86,8 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        controller?.release()
+        controllerFuture?.let { MediaController.releaseFuture(it) }
+        controller = null
         super.onDestroy()
     }
 }

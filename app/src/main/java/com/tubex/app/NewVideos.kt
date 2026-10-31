@@ -74,7 +74,7 @@ class NewVideoWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
         if (subs.isEmpty()) return Result.success()
 
         val blocks = dao.blocksOnce().map { it.entry }.toSet()
-        val seen = prefs.seenVideos.toMutableSet()
+        val seen = LinkedHashSet(prefs.seenVideos)
         val base = prefs.baselined.toMutableSet()
         val fresh = ArrayList<Pair<SubEntity, VideoItem>>()
 
@@ -89,7 +89,7 @@ class NewVideoWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
                 if (Blocks.allowed(blocks, v.title, v.channel, v.url)) fresh.add(s to v)
             }
         }
-        prefs.seenVideos = seen.toList().takeLast(2000).toSet()
+        prefs.seenVideos = seen.toList().takeLast(2000)
         prefs.baselined = base
         Notif.newVideos(app, fresh.take(5), fresh.size)
         return Result.success()

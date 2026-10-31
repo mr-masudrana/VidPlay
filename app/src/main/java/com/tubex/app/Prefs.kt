@@ -64,9 +64,14 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("notifyHours", 6)
         set(v) { sp.edit().putInt("notifyHours", v).apply() }
 
-    var seenVideos: Set<String>
-        get() = sp.getStringSet("seenVideos", emptySet())?.toSet() ?: emptySet()
-        set(v) { sp.edit().putStringSet("seenVideos", v).apply() }
+    /** ক্রম বজায় রেখে সংরক্ষণ (পুরনোগুলো আগে), যাতে ছাঁটাইয়ে নতুনগুলো বাদ না পড়ে */
+    var seenVideos: List<String>
+        get() {
+            val s = sp.getString("seenVideosOrdered", null)
+            return if (s != null) s.split("\n").filter { it.isNotBlank() }
+            else sp.getStringSet("seenVideos", emptySet())?.toList() ?: emptyList()
+        }
+        set(v) { sp.edit().putString("seenVideosOrdered", v.joinToString("\n")).remove("seenVideos").apply() }
 
     var baselined: Set<String>
         get() = sp.getStringSet("baselined", emptySet())?.toSet() ?: emptySet()

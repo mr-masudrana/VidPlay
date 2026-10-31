@@ -47,6 +47,8 @@ android {
     kotlinOptions { jvmTarget = "17" }
 
     buildFeatures { compose = true }
+
+    ksp { arg("room.schemaLocation", "$projectDir/schemas") }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.15" }   // Kotlin 1.9.25-এর জন্য
 
     packaging {

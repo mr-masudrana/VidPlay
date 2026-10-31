@@ -374,7 +374,7 @@ private fun Details(vm: MainViewModel) {
                         Column {
                             Text(info.uploaderName, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             if (info.uploaderSubscriberCount >= 0)
-                                Text("${fmtCount(info.uploaderSubscriberCount)} subscribers", color = Sub, fontSize = 12.sp)
+                                Text(L.f("{0} সাবস্ক্রাইবার", fmtCount(info.uploaderSubscriberCount)), color = Sub, fontSize = 12.sp)
                         }
                     }
                     Button(
@@ -569,7 +569,7 @@ private fun PlayerSettingsSheet(vm: MainViewModel, onDismiss: () -> Unit) {
 
             OptionRow(
                 L.t("স্লিপ টাইমার"), listOf(0, 15, 30, 45, 60, -1),
-                if (vm.sleepAtEnd) -1 else if (vm.sleepEnd > 0) -2 else 0,
+                vm.sleepMin,
                 { when (it) { 0 -> L.t("বন্ধ"); -1 -> L.t("ভিডিও শেষে"); else -> L.f("{0} মি", it) } }
             ) { vm.startSleep(it) }
             if (vm.sleepEnd > 0) {

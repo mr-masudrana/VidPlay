@@ -51,7 +51,7 @@ fun ChannelScreen(vm: MainViewModel) {
                     Column {
                         Text(ch.name, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                         if (ch.subscribers >= 0)
-                            Text("${fmtCount(ch.subscribers)} subscribers", color = Sub, fontSize = 13.sp)
+                            Text(L.f("{0} সাবস্ক্রাইবার", fmtCount(ch.subscribers)), color = Sub, fontSize = 13.sp)
                     }
                 }
                 if (!ch.description.isNullOrBlank()) Text(

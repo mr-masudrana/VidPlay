@@ -144,7 +144,7 @@ fun DescriptionSheet(vm: MainViewModel, info: StreamInfo, onDismiss: () -> Unit)
                         Modifier.fillMaxWidth().clickable { vm.player.seekTo(c.startTimeSeconds * 1000L); onDismiss() }
                             .padding(horizontal = 16.dp, vertical = 8.dp)
                     ) {
-                        Text(fmtDur(c.startTimeSeconds.toLong()), color = linkColor(), fontSize = 13.sp, modifier = Modifier.width(56.dp))
+                        Text(fmtTime(c.startTimeSeconds.toLong()), color = linkColor(), fontSize = 13.sp, modifier = Modifier.width(56.dp))
                         Text(c.title ?: "", fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                 }

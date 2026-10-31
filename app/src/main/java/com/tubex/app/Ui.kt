@@ -366,7 +366,7 @@ fun VideoCard(v: VideoItem, onChannel: () -> Unit = {}, onClick: () -> Unit) {
                 Text(
                     listOfNotNull(
                         v.channel.ifBlank { null },
-                        fmtCount(v.views).ifBlank { null }?.let { "$it views" },
+                        fmtCount(v.views).ifBlank { null }?.let { L.f("{0} ভিউ", it) },
                         v.uploaded
                     ).joinToString(" • "),
                     color = Sub, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,

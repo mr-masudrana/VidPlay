@@ -41,6 +41,7 @@ object DownloadEngine {
     val status = MutableStateFlow<Pair<String, Int>?>(null)
     val isActive: Boolean get() = active.value
 
+    @Synchronized
     fun kick(ctx: Context) {
         val app = ctx.applicationContext
         active.value = true
@@ -57,7 +58,7 @@ object DownloadEngine {
                 currentId = -1
             }
             status.value = null
-            active.value = false
+            synchronized(DownloadEngine) { loop = null; active.value = false }
             if (dao.nextQueued() != null) kick(app)   // শেষ মুহূর্তে যোগ হওয়া আইটেম
         }
     }
@@ -83,7 +84,7 @@ object DownloadEngine {
 
     // ---------- একটি আইটেম ----------
     private suspend fun runOne(dao: AppDao, d: DownloadEntity) {
-        dao.setState(d.id, 1)
+        if (dao.markRunning(d.id) == 0) return   // এর মধ্যে থামানো/মোছা হয়েছে
         status.value = d.title to 0
         var lastWrite = 0L
 

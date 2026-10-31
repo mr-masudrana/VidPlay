@@ -51,7 +51,8 @@ object Downloads {
     }
 
     suspend fun enqueue(ctx: Context, dao: AppDao, info: StreamInfo, o: DlOption) {
-        val dir = ctx.getExternalFilesDir(Environment.DIRECTORY_MOVIES)!!
+        val dir = ctx.getExternalFilesDir(Environment.DIRECTORY_MOVIES)
+            ?: File(ctx.filesDir, "downloads").also { it.mkdirs() }
         val safe = info.name.replace(Regex("[^\\p{L}\\p{N} _-]"), "").trim().take(50).ifBlank { "video" }
         val tag = if (o.audioOnly) "audio" else "${o.height}p"
         val ext = if (o.audioOnly) "m4a" else if (o.webm) "webm" else "mp4"

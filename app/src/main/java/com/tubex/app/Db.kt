@@ -75,6 +75,7 @@ interface AppDao {
     @Query("SELECT * FROM downloads WHERE state = 0 ORDER BY id LIMIT 1") suspend fun nextQueued(): DownloadEntity?
     @Query("SELECT * FROM downloads WHERE path = :path LIMIT 1") suspend fun downloadByPath(path: String): DownloadEntity?
     @Query("UPDATE downloads SET state = :state WHERE id = :id") suspend fun setState(id: Long, state: Int)
+    @Query("UPDATE downloads SET state = 1 WHERE id = :id AND state = 0") suspend fun markRunning(id: Long): Int
     @Query("UPDATE downloads SET progress = :p WHERE id = :id") suspend fun setProgress(id: Long, p: Int)
     @Query("UPDATE downloads SET state = 3, progress = 1000 WHERE id = :id") suspend fun markDone(id: Long)
     @Query("UPDATE downloads SET state = 2 WHERE id = :id AND state IN (0, 1)") suspend fun pauseOne(id: Long)
@@ -135,7 +136,7 @@ interface AppDao {
         SubEntity::class, DownloadEntity::class, HistoryEntity::class, InterestEntity::class,
         PlaylistEntity::class, PlaylistItemEntity::class, FavoriteEntity::class, BlockEntity::class
     ],
-    version = 4, exportSchema = false
+    version = 4, exportSchema = true
 )
 abstract class AppDb : RoomDatabase() {
     abstract fun dao(): AppDao
@@ -164,7 +165,7 @@ abstract class AppDb : RoomDatabase() {
         fun get(ctx: Context): AppDb = inst ?: synchronized(this) {
             inst ?: Room.databaseBuilder(ctx.applicationContext, AppDb::class.java, "tubex.db")
                 .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
-                .fallbackToDestructiveMigration()
+                .fallbackToDestructiveMigrationFrom(1)   // শুধু v1 থেকে; বাকি মাইগ্রেশন ব্যর্থ হলে ডেটা চুপচাপ মুছবে না
                 .build().also { inst = it }
         }
     }
