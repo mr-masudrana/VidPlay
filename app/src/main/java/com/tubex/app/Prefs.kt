@@ -60,6 +60,16 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("notifyEnabled", true)
         set(v) { sp.edit().putBoolean("notifyEnabled", v).apply() }
 
+    /** অ্যাপের নতুন ভার্সন এলে নোটিফিকেশন */
+    var updateNotify: Boolean
+        get() = sp.getBoolean("updateNotify", true)
+        set(v) { sp.edit().putBoolean("updateNotify", v).apply() }
+
+    /** যে ভার্সনের জন্য শেষবার নোটিফিকেশন দেওয়া হয়েছে (একই আপডেটে বারবার নয়) */
+    var lastNotifiedUpdate: String
+        get() = sp.getString("lastNotifiedUpdate", "") ?: ""
+        set(v) { sp.edit().putString("lastNotifiedUpdate", v).apply() }
+
     var notifyHours: Int
         get() = sp.getInt("notifyHours", 6)
         set(v) { sp.edit().putInt("notifyHours", v).apply() }

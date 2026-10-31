@@ -4,6 +4,18 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+// ভার্সন: GitHub Release ট্যাগ (যেমন v1.3) থেকে নেওয়া হয়, তাই App info-তে সবসময় রিলিজের ভার্সনই দেখায়।
+// ট্যাগ ছাড়া (লোকাল/ডিবাগ) বিল্ডে নিচের baseVersion ব্যবহার হয় — নতুন রিলিজের আগে এটা বদলে রাখুন।
+val baseVersion = "1.2"
+val tagName: String? = if (System.getenv("GITHUB_REF_TYPE") == "tag") System.getenv("GITHUB_REF_NAME") else null
+val appVersion: String = tagName?.removePrefix("v")?.takeIf { Regex("""\d+(\.\d+){0,2}""").matches(it) } ?: baseVersion
+fun versionCodeOf(v: String): Int {
+    val p = v.split(".").map { it.toInt() }
+    return p.getOrElse(0) { 0 } * 10000 + p.getOrElse(1) { 0 } * 100 + p.getOrElse(2) { 0 }
+}
+// আপডেট খোঁজার রিপোজিটরি ("owner/repo"): GitHub Actions-এ নিজে সেট হয়; লোকালি -PupdateRepo=owner/repo দিন
+val updateRepo: String = System.getenv("GITHUB_REPOSITORY") ?: (project.findProperty("updateRepo") as String?) ?: ""
+
 android {
     namespace = "com.tubex.app"
     compileSdk = 34
@@ -12,8 +24,9 @@ android {
         applicationId = "com.tubex.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = versionCodeOf(appVersion)
+        versionName = appVersion
+        buildConfigField("String", "UPDATE_REPO", "\"$updateRepo\"")
     }
 
     // রিলিজ সাইনিং: কীস্টোর পরিবেশ ভেরিয়েবল থেকে আসে (নিচে .github/workflows/release.yml দেখুন)।
@@ -46,7 +59,10 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
 
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
 
     ksp { arg("room.schemaLocation", "$projectDir/schemas") }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.15" }   // Kotlin 1.9.25-এর জন্য

@@ -24,12 +24,14 @@ import java.util.concurrent.TimeUnit
 object Notif {
     const val CH_DL = "downloads"
     const val CH_NEW = "new_videos"
+    const val CH_UPDATE = "app_update"
 
     fun ensureChannels(ctx: Context) {
         if (Build.VERSION.SDK_INT < 26) return
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(NotificationChannel(CH_DL, L.t("ডাউনলোড"), NotificationManager.IMPORTANCE_LOW))
         nm.createNotificationChannel(NotificationChannel(CH_NEW, L.t("নতুন ভিডিও"), NotificationManager.IMPORTANCE_DEFAULT))
+        nm.createNotificationChannel(NotificationChannel(CH_UPDATE, L.t("অ্যাপ আপডেট"), NotificationManager.IMPORTANCE_DEFAULT))
     }
 
     @SuppressLint("MissingPermission")

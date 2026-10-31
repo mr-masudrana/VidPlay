@@ -82,6 +82,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var audioOnly by mutableStateOf(prefs.audioOnly); private set
     var notifyOn by mutableStateOf(prefs.notifyEnabled); private set
     var notifyHours by mutableStateOf(prefs.notifyHours); private set
+    var updateNotifyOn by mutableStateOf(prefs.updateNotify); private set
     var loop by mutableStateOf(false); private set
     var sleepEnd by mutableStateOf(0L); private set
     var sleepAtEnd by mutableStateOf(false); private set
@@ -120,6 +121,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun putFeed(key: String, list: List<VideoItem>) {
         if (list.isNotEmpty()) feedCache[key] = System.currentTimeMillis() to list
     }
+    /** ব্যাক জেসচারের প্রিভিউর জন্য: বর্তমান ক্যাটাগরির হোম ফিড (ক্যাশ থেকে) */
+    fun previewFeed(): List<VideoItem> =
+        feedCache[if (chipIndex == 0) "foryou" else "cat:${chipQuery.orEmpty()}"]?.second
+            ?: if (!isSearchResult) feed else emptyList()
     fun pickCategory(i: Int, name: String) {
         chipIndex = i; chipQuery = if (i == 0) null else name
         if (i == 0) loadForYou() else load(name)
@@ -799,6 +804,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun removeBlock(entry: String) = viewModelScope.launch { dao.removeBlock(entry) }
 
     // ---------- নতুন ভিডিওর নোটিফিকেশন ও DeArrow ----------
+    fun toggleUpdateNotify(v: Boolean) {
+        updateNotifyOn = v; prefs.updateNotify = v
+        UpdateScheduler.apply(ctx, v)
+    }
     fun toggleNotify(v: Boolean) {
         notifyOn = v; prefs.notifyEnabled = v
         NotifyScheduler.apply(ctx, v, notifyHours, replace = true)

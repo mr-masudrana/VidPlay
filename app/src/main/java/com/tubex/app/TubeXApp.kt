@@ -17,5 +17,6 @@ class TubeXApp : Application() {
         )
         Notif.ensureChannels(this)
         NotifyScheduler.apply(this, p.notifyEnabled, p.notifyHours, replace = false)
+        UpdateScheduler.apply(this, p.updateNotify)
     }
 }

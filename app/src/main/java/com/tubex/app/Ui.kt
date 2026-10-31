@@ -5,6 +5,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
@@ -18,6 +19,8 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -201,20 +204,27 @@ fun YtApp(vm: MainViewModel) = CompositionLocalProvider(LocalVm provides vm) {
         ) {
             PredictiveBackScreen(enabled = vm.channelOpen, onBack = { vm.closeChannel() }) { ChannelScreen(vm) }
         }
-        if (vm.active && !vm.expanded && vm.floatingMini) {
-            FloatingPlayer(vm, constraints.maxWidth.toFloat(), constraints.maxHeight.toFloat())
-        }
-        // প্লেয়ার: নিচ থেকে স্লাইড-আপ + ফেড; ব্যাক/মিনিমাইজে মিলিয়ে যায়
         val landscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
             android.content.res.Configuration.ORIENTATION_LANDSCAPE
         val playerShown = vm.expanded && (vm.active || vm.loadingNew)
-        AnimatedVisibility(
-            visible = playerShown, modifier = Modifier.fillMaxSize(),
-            enter = slideInVertically(tween(300)) { it / 2 } + fadeIn(tween(300)),
-            exit = fadeOut(tween(260))
-        ) {
-            PredictiveBackScreen(enabled = playerShown && !landscape && !vm.inPip, onBack = { vm.minimize() }) {
-                PlayerScreen(vm)
+        val cw = constraints.maxWidth.toFloat()
+        val ch = constraints.maxHeight.toFloat()
+        if (vm.floatingMini) {
+            // ভাসমান মোড: প্লেয়ার পেজ ছোট হয়ে ভাসমান উইন্ডো হয়, আবার ওখান থেকে বড় হয়ে খোলে
+            val morph = remember { Animatable(if (playerShown) 1f else 0f) }
+            val collapsed by remember { derivedStateOf { morph.value == 0f } }
+            if (vm.active && !vm.expanded && collapsed) FloatingPlayer(vm, cw, ch)
+            MorphPlayer(vm, morph, cw, ch, landscape)
+        } else {
+            // প্লেয়ার: নিচ থেকে স্লাইড-আপ + ফেড; ব্যাক/মিনিমাইজে মিলিয়ে যায়
+            AnimatedVisibility(
+                visible = playerShown, modifier = Modifier.fillMaxSize(),
+                enter = slideInVertically(tween(300)) { it / 2 } + fadeIn(tween(300)),
+                exit = fadeOut(tween(260))
+            ) {
+                PredictiveBackScreen(enabled = playerShown && !landscape && !vm.inPip, onBack = { vm.minimize() }) {
+                    PlayerScreen(vm)
+                }
             }
         }
         if (vm.opening) LinearProgressIndicator(
@@ -259,22 +269,32 @@ fun MainScaffold(vm: MainViewModel) {
 
     // সার্চ বন্ধ করা, অথবা অন্য ট্যাব থেকে হোমে ফেরা: প্রেডিক্টিভ ব্যাকসহ।
     // হোম থেকে ব্যাক করলে অ্যাপ বন্ধ (সিস্টেমের ব্যাক-টু-হোম অ্যানিমেশনসহ)
-    val backAnim = rememberPredictiveBack(enabled = vm.tab != 0 || vm.searching) {
+    // ব্যাকে প্রিভিউ থেকে সরাসরি আসল হোমে বদলায়, তাই এই সময় ট্যাবের স্লাইড/ফেড ট্রানজিশন বন্ধ
+    var skipTabAnim by remember { mutableStateOf(false) }
+    val backAnim = rememberPredictiveBack(enabled = vm.tab != 0 || vm.searching, deferBack = true) {
+        skipTabAnim = true
         if (vm.tab != 0) vm.tab = 0 else vm.closeSearch()
     }
+    val backIdle = backAnim.progress == 0f
+    LaunchedEffect(backIdle) { if (backIdle) skipTabAnim = false }
 
     val bottomDp = with(density) { bars.bottomPx.toDp() }
 
     Box(Modifier.fillMaxSize().background(Bg)) {
-        Box(Modifier.fillMaxSize().predictiveBackLayer(backAnim)) {
+        // ব্যাক জেসচার চলার সময় নিচে আগের (হোম) পেজের প্রিভিউ; ওপরের পেজ মিলিয়ে গেলে এটি ফুটে ওঠে
+        if (backAnim.progress > 0f) HomePreview(vm, statusDp, bottomDp)
+        Box(Modifier.fillMaxSize().predictiveBackLayer(backAnim).background(Bg)) {
             // ট্যাব বদলালে ডানে/বামে স্লাইড + ক্রসফেড (ট্যাবের ক্রম অনুযায়ী দিক ঠিক হয়)
             AnimatedContent(
                 targetState = vm.tab,
                 modifier = Modifier.fillMaxSize(),
                 transitionSpec = {
-                    val dir = if (targetState > initialState) 1 else -1
-                    (slideInHorizontally(tween(280)) { dir * it / 5 } + fadeIn(tween(280))) togetherWith
-                        (slideOutHorizontally(tween(280)) { -dir * it / 5 } + fadeOut(tween(160)))
+                    if (skipTabAnim) EnterTransition.None togetherWith ExitTransition.None
+                    else {
+                        val dir = if (targetState > initialState) 1 else -1
+                        (slideInHorizontally(tween(280)) { dir * it / 5 } + fadeIn(tween(280))) togetherWith
+                            (slideOutHorizontally(tween(280)) { -dir * it / 5 } + fadeOut(tween(160)))
+                    }
                 },
                 label = "tabs"
             ) { tab ->
@@ -560,6 +580,34 @@ private fun HomeFeed(vm: MainViewModel, shown: List<VideoItem>, listState: LazyL
                 items(shown) { v -> VideoCard(v, onChannel = { vm.openChannel(v.channelUrl) }) { vm.play(v.url) } }
             }
         }
+    }
+}
+
+/** ব্যাক জেসচারে নিচে দেখানো আগের হোম পেজের স্থির প্রিভিউ (ইন্টারঅ্যাকশন নেই) */
+@Composable
+private fun HomePreview(vm: MainViewModel, statusDp: Dp, bottomDp: Dp) {
+    val list = remember(vm.chipIndex) { vm.previewFeed() }
+    Box(Modifier.fillMaxSize().background(Bg)) {
+        LazyColumn(
+            Modifier.fillMaxSize(), userScrollEnabled = false,
+            contentPadding = PaddingValues(top = statusDp + TopBarH + ChipsH, bottom = bottomDp)
+        ) {
+            if (list.isEmpty()) item { VideoListSkeleton(3) }
+            else items(list.take(8)) { v -> VideoCard(v) { } }
+        }
+        Column(Modifier.align(Alignment.TopStart).fillMaxWidth().padding(top = statusDp).background(Bg)) {
+            Row(
+                Modifier.fillMaxWidth().height(TopBarH).padding(start = 12.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Filled.PlayCircle, null, tint = YtRed, modifier = Modifier.size(28.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("TubeX", fontWeight = FontWeight.Bold, fontSize = 20.sp, modifier = Modifier.weight(1f))
+                Box(Modifier.size(48.dp), Alignment.Center) { Icon(Icons.Filled.Search, null) }
+            }
+            CategoryRow(vm, vm.chipIndex)
+        }
+        if (statusDp > 0.dp) Box(Modifier.align(Alignment.TopStart).fillMaxWidth().height(statusDp).background(Bg))
     }
 }
 

@@ -11,6 +11,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** প্রেডিক্টিভ ব্যাক জেসচারের অবস্থা: progress 0..1, edge = কোন কিনারা থেকে সোয়াইপ */
@@ -28,6 +29,7 @@ class BackAnim {
 fun rememberPredictiveBack(
     enabled: Boolean = true,
     fadeOutOnCommit: Boolean = false,
+    deferBack: Boolean = false,
     onBack: () -> Unit
 ): BackAnim {
     val anim = remember { BackAnim() }
@@ -40,7 +42,15 @@ fun rememberPredictiveBack(
     PredictiveBackHandler(enabled) { events ->
         try {
             events.collect { e -> anim.progress = e.progress; anim.edge = e.swipeEdge }
-            if (fadeOutOnCommit) {
+            if (deferBack) {
+                // মূল পেজ (ট্যাব/সার্চ): আগে বর্তমান পেজ পুরো মিলিয়ে যায় (নিচে আগের পেজ দেখা যায়), তারপর পেজ বদলায়
+                scope.launch {
+                    animate(anim.progress, 1f, animationSpec = tween(220)) { v, _ -> anim.progress = v }
+                    currentOnBack()
+                    delay(260)          // নতুন পেজের নিজস্ব ট্রানজিশন শেষ হওয়া পর্যন্ত প্রিভিউ থাকে
+                    anim.progress = 0f
+                }
+            } else if (fadeOutOnCommit) {
                 // ওভারলে স্ক্রিন (প্লেয়ার/চ্যানেল): ছাড়লে বর্তমান পেজ পুরোপুরি মিলিয়ে যায়, নিচের আগের পেজ ফুটে ওঠে
                 scope.launch { animate(anim.progress, 1f, animationSpec = tween(240)) { v, _ -> anim.progress = v } }
                 currentOnBack()
