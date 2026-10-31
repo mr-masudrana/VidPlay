@@ -1,6 +1,23 @@
 package com.tubex.app
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animate
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.text.TextStyle
+import kotlinx.coroutines.flow.collectLatest
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -176,14 +193,29 @@ val LocalVm = staticCompositionLocalOf<MainViewModel?> { null }
 fun YtApp(vm: MainViewModel) = CompositionLocalProvider(LocalVm provides vm) {
     BoxWithConstraints(Modifier.fillMaxSize().background(Bg)) {
         MainScaffold(vm)
-        if (vm.channelOpen) PredictiveBackScreen(onBack = { vm.closeChannel() }) { ChannelScreen(vm) }
+        // চ্যানেল পেজ: ডান দিক থেকে স্লাইড + ফেড; ব্যাক জেসচারে ছোট হয়ে সরে যায়, ছাড়লে স্লাইড + ফেডে বেরিয়ে যায়
+        AnimatedVisibility(
+            visible = vm.channelOpen, modifier = Modifier.fillMaxSize(),
+            enter = slideInHorizontally(tween(280)) { it / 3 } + fadeIn(tween(280)),
+            exit = slideOutHorizontally(tween(240)) { it / 3 } + fadeOut(tween(240))
+        ) {
+            PredictiveBackScreen(enabled = vm.channelOpen, onBack = { vm.closeChannel() }) { ChannelScreen(vm) }
+        }
         if (vm.active && !vm.expanded && vm.floatingMini) {
             FloatingPlayer(vm, constraints.maxWidth.toFloat(), constraints.maxHeight.toFloat())
         }
-        if (vm.expanded && (vm.active || vm.loadingNew)) {
-            val landscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
-                android.content.res.Configuration.ORIENTATION_LANDSCAPE
-            PredictiveBackScreen(enabled = !landscape && !vm.inPip, onBack = { vm.minimize() }) { PlayerScreen(vm) }
+        // প্লেয়ার: নিচ থেকে স্লাইড-আপ + ফেড; মিনিমাইজে নিচে নেমে ফেড আউট
+        val landscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
+            android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val playerShown = vm.expanded && (vm.active || vm.loadingNew)
+        AnimatedVisibility(
+            visible = playerShown, modifier = Modifier.fillMaxSize(),
+            enter = slideInVertically(tween(300)) { it / 2 } + fadeIn(tween(300)),
+            exit = slideOutVertically(tween(260)) { it / 2 } + fadeOut(tween(260))
+        ) {
+            PredictiveBackScreen(enabled = playerShown && !landscape && !vm.inPip, onBack = { vm.minimize() }) {
+                PlayerScreen(vm)
+            }
         }
         if (vm.opening) LinearProgressIndicator(
             Modifier.fillMaxWidth().statusBarsPadding(), color = YtRed, trackColor = Color.Transparent
@@ -191,114 +223,113 @@ fun YtApp(vm: MainViewModel) = CompositionLocalProvider(LocalVm provides vm) {
     }
 }
 
+// ---------- বার ও লেআউটের মাপ ----------
+private val TopBarH = 48.dp     // আগে ৬৪dp
+private val ChipsH = 44.dp
+private val NavH = 52.dp        // আগে ৮০dp
+
+/** টপ বার + ক্যাটাগরি আঙুলের সাথে সাথে কন্টেন্টের মতো ওঠানামা করে; নিচের বার একই অনুপাতে নামে/ওঠে */
+class BarsState {
+    var offset by mutableFloatStateOf(0f)       // 0 (পুরো দেখা যায়) .. -headerPx (পুরো লুকানো)
+    var headerPx by mutableFloatStateOf(0f)     // যে অংশটা লুকাতে পারে (টপ বার + ক্যাটাগরি)
+    var navPx by mutableFloatStateOf(0f)
+    var bottomPx by mutableFloatStateOf(0f)     // মিনিপ্লেয়ার + নেভ বার + সিস্টেম ইনসেট
+    val fraction: Float get() = if (headerPx <= 0f) 0f else (-offset / headerPx).coerceIn(0f, 1f)
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScaffold(vm: MainViewModel) {
-    val focus = remember { FocusRequester() }
-    val focusManager = LocalFocusManager.current
+    val density = LocalDensity.current
+    val bars = remember { BarsState() }
+    val statusDp = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val navInsetDp = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val on = MaterialTheme.colorScheme.onBackground
     val tabs = listOf(
         Triple(L.t("হোম"), Icons.Outlined.Home, "TubeX"),
         Triple(L.t("সাবস্ক্রিপশন"), Icons.Outlined.Subscriptions, L.t("সাবস্ক্রিপশন")),
         Triple(L.t("লাইব্রেরি"), Icons.Outlined.VideoLibrary, L.t("লাইব্রেরি")),
         Triple(L.t("সেটিংস"), Icons.Outlined.Settings, L.t("সেটিংস"))
     )
-    LaunchedEffect(vm.searching) { if (vm.searching) runCatching { focus.requestFocus() } }
 
-    // হোমে নিচে স্ক্রোল করলে টপ ও বটম বার লুকায়, ওপরে স্ক্রোল করলে আবার দেখায়
-    var barsShown by remember { mutableStateOf(true) }
-    LaunchedEffect(vm.tab, vm.searching, vm.showSuggestions, vm.homeTopTick, vm.feedLoading) { barsShown = true }
-    val scrollConn = remember {
-        object : NestedScrollConnection {
-            var acc = 0f
-            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                val dy = available.y
-                if (dy == 0f) return Offset.Zero
-                if ((dy < 0f) != (acc < 0f)) acc = 0f      // দিক বদলালে হিসাব নতুন করে
-                acc += dy
-                if (acc < -90f) { barsShown = false; acc = 0f }
-                else if (acc > 40f) { barsShown = true; acc = 0f }
-                return Offset.Zero
-            }
-        }
+    // ট্যাব/সার্চ বদলালে বার স্মুথভাবে আবার পুরো দেখায়
+    LaunchedEffect(vm.tab, vm.searching, vm.showSuggestions, vm.homeTopTick, vm.feedLoading) {
+        if (bars.offset != 0f) animate(bars.offset, 0f, animationSpec = tween(200)) { v, _ -> bars.offset = v }
     }
-    val barsVisible = barsShown || vm.tab != 0 || (vm.searching && vm.showSuggestions)
-    // সার্চ বন্ধ করা, অথবা অন্য ট্যাব (সাবস্ক্রিপশন/লাইব্রেরি/সেটিংস) থেকে হোমে ফেরা: প্রেডিক্টিভ ব্যাকসহ।
+
+    // সার্চ বন্ধ করা, অথবা অন্য ট্যাব থেকে হোমে ফেরা: প্রেডিক্টিভ ব্যাকসহ।
     // হোম থেকে ব্যাক করলে অ্যাপ বন্ধ (সিস্টেমের ব্যাক-টু-হোম অ্যানিমেশনসহ)
     val backAnim = rememberPredictiveBack(enabled = vm.tab != 0 || vm.searching) {
         if (vm.tab != 0) vm.tab = 0 else vm.closeSearch()
     }
 
-    Scaffold(
-        containerColor = Bg,
-        topBar = {
-            AnimatedVisibility(
-                visible = barsVisible,
-                enter = expandVertically() + fadeIn(),
-                exit = shrinkVertically() + fadeOut()
-            ) { TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg),
-                title = {
-                    if (vm.searching && vm.tab == 0) {
-                        TextField(
-                            value = vm.query, onValueChange = { vm.onQuery(it) },
-                            placeholder = { Text(L.t("সার্চ করুন")) }, singleLine = true,
-                            colors = TextFieldDefaults.colors(
-                                focusedContainerColor = Chip, unfocusedContainerColor = Chip,
-                                focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent
-                            ),
-                            shape = RoundedCornerShape(24.dp),
-                            modifier = Modifier.fillMaxWidth().focusRequester(focus)
-                                .onFocusChanged { if (it.isFocused) vm.reopenSuggestions() },
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                            keyboardActions = KeyboardActions(onSearch = {
-                                focusManager.clearFocus(); vm.submitSearch(vm.query)
-                            })
-                        )
-                    } else Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (vm.tab == 0) {
-                            Icon(Icons.Filled.PlayCircle, null, tint = YtRed, modifier = Modifier.size(30.dp))
-                            Spacer(Modifier.width(4.dp))
-                        }
-                        Text(tabs[vm.tab].third, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                    }
+    val bottomDp = with(density) { bars.bottomPx.toDp() }
+
+    Box(Modifier.fillMaxSize().background(Bg)) {
+        Box(Modifier.fillMaxSize().predictiveBackLayer(backAnim)) {
+            // ট্যাব বদলালে ডানে/বামে স্লাইড + ক্রসফেড (ট্যাবের ক্রম অনুযায়ী দিক ঠিক হয়)
+            AnimatedContent(
+                targetState = vm.tab,
+                modifier = Modifier.fillMaxSize(),
+                transitionSpec = {
+                    val dir = if (targetState > initialState) 1 else -1
+                    (slideInHorizontally(tween(280)) { dir * it / 5 } + fadeIn(tween(280))) togetherWith
+                        (slideOutHorizontally(tween(280)) { -dir * it / 5 } + fadeOut(tween(160)))
                 },
-                actions = {
-                    if (vm.tab == 0) {
-                        if (vm.searching) IconButton(onClick = { vm.closeSearch() }) { Icon(Icons.Filled.Close, null) }
-                        else IconButton(onClick = { vm.openSearch() }) { Icon(Icons.Filled.Search, null) }
+                label = "tabs"
+            ) { tab ->
+                if (tab == 0) HomeScreen(vm, bars, bottomDp)
+                else Box(Modifier.fillMaxSize()) {
+                    Box(Modifier.fillMaxSize().padding(top = statusDp + TopBarH, bottom = bottomDp)) {
+                        when (tab) {
+                            1 -> SubsTab(vm)
+                            2 -> LibraryTab(vm)
+                            else -> SettingsTab(vm)
+                        }
                     }
+                    Box(
+                        Modifier.align(Alignment.TopStart).fillMaxWidth().padding(top = statusDp)
+                            .height(TopBarH).background(Bg),
+                        Alignment.CenterStart
+                    ) { Text(tabs[tab].third, fontWeight = FontWeight.Bold, fontSize = 20.sp, modifier = Modifier.padding(start = 16.dp)) }
                 }
-            ) }
-        },
-        bottomBar = {
-            Column {
-                if (vm.active && !vm.expanded && !vm.floatingMini) MiniPlayer(vm)
-                AnimatedVisibility(
-                    visible = barsVisible,
-                    enter = expandVertically() + fadeIn(),
-                    exit = shrinkVertically() + fadeOut()
-                ) { NavigationBar(containerColor = Bg) {
-                    tabs.forEachIndexed { i, (label, icon, _) ->
-                        NavigationBarItem(
-                            selected = vm.tab == i,
-                            onClick = {
-                                if (i == 0 && vm.tab == 0) vm.scrollHomeToTop() else vm.tab = i
-                            },
-                            icon = { Icon(icon, label) }, label = { Text(label, fontSize = 10.sp) },
-                            colors = NavigationBarItemDefaults.colors(indicatorColor = Chip)
-                        )
-                    }
-                } }
             }
         }
-    ) { pad ->
-        Box(Modifier.padding(pad).fillMaxSize().nestedScroll(scrollConn).predictiveBackLayer(backAnim)) {
-            when (vm.tab) {
-                0 -> if (vm.searching && vm.showSuggestions) SearchPanel(vm) else HomeTab(vm)
-                1 -> SubsTab(vm)
-                2 -> LibraryTab(vm)
-                else -> SettingsTab(vm)
+
+        // স্ট্যাটাস বারের জায়গা সবসময় থিমের রঙে ঢাকা (কন্টেন্ট নিচ দিয়ে যায়)
+        if (statusDp > 0.dp) Box(Modifier.align(Alignment.TopStart).fillMaxWidth().height(statusDp).background(Bg))
+
+        // নিচের অংশ: মিনিপ্লেয়ার + নেভ বার (নেভ বার স্ক্রোলের সাথে নিচে নামে), তার নিচে স্থির ইনসেট স্ট্রিপ
+        Column(
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                .onSizeChanged { bars.bottomPx = it.height.toFloat() }
+        ) {
+            Column(Modifier.graphicsLayer { translationY = bars.fraction * bars.navPx }) {
+                if (vm.active && !vm.expanded && !vm.floatingMini) MiniPlayer(vm)
+                Row(
+                    Modifier.fillMaxWidth().height(NavH).background(Bg)
+                        .onSizeChanged { bars.navPx = it.height.toFloat() }
+                ) {
+                    tabs.forEachIndexed { i, (label, icon, _) ->
+                        val sel = vm.tab == i
+                        Column(
+                            Modifier.weight(1f).fillMaxHeight().clickable {
+                                if (i == 0 && vm.tab == 0) vm.scrollHomeToTop() else vm.tab = i
+                            },
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Box(
+                                Modifier.clip(RoundedCornerShape(14.dp))
+                                    .background(if (sel) Chip else Color.Transparent)
+                                    .padding(horizontal = 18.dp, vertical = 3.dp)
+                            ) { Icon(icon, label, Modifier.size(22.dp), tint = if (sel) on else Sub) }
+                            Text(label, fontSize = 10.sp, color = if (sel) on else Sub, maxLines = 1)
+                        }
+                    }
+                }
             }
+            Box(Modifier.fillMaxWidth().height(navInsetDp).background(Bg))
         }
     }
 }
@@ -330,104 +361,213 @@ fun SearchPanel(vm: MainViewModel) {
     }
 }
 
+
+// ---------- হোম ----------
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeTab(vm: MainViewModel) {
+fun HomeScreen(vm: MainViewModel, bars: BarsState, bottomPad: Dp) {
+    val density = LocalDensity.current
+    val focus = remember { FocusRequester() }
+    val listState = rememberLazyListState()
     var chip by remember(vm.searching) { mutableStateOf(0) }
     var showFilter by remember { mutableStateOf(false) }
-    val listState = rememberLazyListState()
+    val statusDp = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val panel = vm.searching && vm.showSuggestions
+    val headerDp = TopBarH + ChipsH
+    val headerPx = with(density) { headerDp.toPx() }
+    SideEffect { bars.headerPx = if (panel) 0f else headerPx }
+
+    LaunchedEffect(vm.searching) { if (vm.searching) runCatching { focus.requestFocus() } }
+
+    // হোম ট্যাবে আবার ট্যাপ করলে স্মুথভাবে ওপরে
     var seenTick by remember { mutableStateOf(vm.homeTopTick) }
     LaunchedEffect(vm.homeTopTick) {
         if (vm.homeTopTick != seenTick) {
             seenTick = vm.homeTopTick
-            // অনেক নিচে থাকলে আগে কাছাকাছি লাফ দিয়ে তারপর স্মুথ স্ক্রোল
             if (listState.firstVisibleItemIndex > 6) listState.scrollToItem(6)
             listState.animateScrollToItem(0)
         }
     }
-    val chips = listOf(L.t("আপনার জন্য"), L.t("গান"), L.t("গেমিং"), L.t("খবর"), L.t("লাইভ"), L.t("রান্না"), L.t("ক্রিকেট"))
-    val on = MaterialTheme.colorScheme.onBackground
+
+    // আঙুল ছাড়লে বার আধা-লুকানো অবস্থায় থাকে না: কাছের দিকে স্মুথভাবে গুটিয়ে/খুলে যায়
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress }.collectLatest { scrolling ->
+            if (!scrolling && bars.headerPx > 0f) {
+                val target = when {
+                    !listState.canScrollBackward -> 0f
+                    bars.offset < -bars.headerPx / 2f -> -bars.headerPx
+                    else -> 0f
+                }
+                if (target != bars.offset) animate(bars.offset, target, animationSpec = tween(160)) { v, _ -> bars.offset = v }
+            }
+        }
+    }
+
+    val conn = remember(bars) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (bars.headerPx > 0f) bars.offset = (bars.offset + available.y).coerceIn(-bars.headerPx, 0f)
+                return Offset.Zero
+            }
+        }
+    }
+
     val shown = remember(vm.feed, vm.isSearchResult, vm.fDate, vm.fDuration, vm.fSort) {
         if (vm.isSearchResult) SearchFilter.apply(vm.feed, vm.fDate, vm.fDuration, vm.fSort) else vm.feed
     }
 
-    Column {
-        if (vm.isSearchResult) {
-            // সার্চ রেজাল্টে ক্যাটাগরি নয়, ফিল্টার
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(vertical = 8.dp)
-            ) {
-                item {
-                    Row(
-                        Modifier.clip(RoundedCornerShape(8.dp))
-                            .background(if (vm.filtersActive) on else Chip)
-                            .clickable { showFilter = true }
-                            .padding(horizontal = 12.dp, vertical = 7.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Outlined.FilterList, null, Modifier.size(18.dp),
-                            tint = if (vm.filtersActive) Bg else on)
-                        Spacer(Modifier.width(6.dp))
-                        Text(L.t("ফিল্টার"), fontSize = 14.sp, fontWeight = FontWeight.Medium,
-                            color = if (vm.filtersActive) Bg else on)
-                    }
-                }
-                if (vm.fDate != 0) item {
-                    ActiveFilterChip(L.t(SearchFilter.dates[vm.fDate])) { vm.setDateFilter(0) }
-                }
-                if (vm.fDuration != 0) item {
-                    ActiveFilterChip(L.t(SearchFilter.durations[vm.fDuration])) { vm.setDurationFilter(0) }
-                }
-                if (vm.fSort != 0) item {
-                    ActiveFilterChip(L.t(SearchFilter.sorts[vm.fSort])) { vm.setSortFilter(0) }
-                }
-            }
-        } else {
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(vertical = 8.dp)
-            ) {
-                items(chips.size) { i ->
-                    val sel = i == chip
-                    Text(
-                        chips[i], color = if (sel) Bg else on,
-                        fontSize = 14.sp, fontWeight = FontWeight.Medium,
-                        modifier = Modifier.clip(RoundedCornerShape(8.dp))
-                            .background(if (sel) on else Chip)
-                            .clickable { chip = i; if (i == 0) vm.loadForYou() else vm.load(chips[i]) }
-                            .padding(horizontal = 12.dp, vertical = 7.dp)
-                    )
-                }
+    Box(Modifier.fillMaxSize().nestedScroll(conn)) {
+        Crossfade(panel, animationSpec = tween(180), label = "search") { isPanel ->
+            if (isPanel) Box(Modifier.fillMaxSize().padding(top = statusDp + TopBarH)) { SearchPanel(vm) }
+            else HomeFeed(vm, shown, listState, top = statusDp + headerDp, bottom = bottomPad)
+        }
+
+        // টপ বার + ক্যাটাগরি/ফিল্টার: কন্টেন্টের সাথে ওপরে উঠে যায়
+        Column(
+            Modifier.align(Alignment.TopStart).fillMaxWidth().padding(top = statusDp)
+                .graphicsLayer { translationY = bars.offset }.background(Bg)
+        ) {
+            HomeTopBar(vm, focus)
+            if (!panel) {
+                if (vm.isSearchResult) SearchFilterRow(vm) { showFilter = true }
+                else CategoryRow(vm, chip) { chip = it }
             }
         }
-        PullToRefreshBox(
-            isRefreshing = vm.refreshing,
-            onRefresh = { vm.refreshFeed() },
-            modifier = Modifier.weight(1f).fillMaxWidth()
-        ) {
-            LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                if (vm.feedLoading) {
-                    // সার্চ/ক্যাটাগরি বদলালে স্কেলিটন লোডিং
-                    item { VideoListSkeleton(3) }
-                } else {
-                    vm.error?.let { e -> item { Text(e, color = Sub, modifier = Modifier.padding(16.dp)) } }
-                    if (shown.isEmpty() && vm.feed.isNotEmpty()) item {
-                        Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(L.t("ফিল্টারে কোনো ভিডিও মেলেনি"), color = Sub)
-                            TextButton(onClick = { vm.resetFilters() }) { Text(L.t("ফিল্টার মুছুন")) }
-                        }
+        if (statusDp > 0.dp) Box(Modifier.align(Alignment.TopStart).fillMaxWidth().height(statusDp).background(Bg))
+    }
+
+    if (showFilter) FilterSheet(vm, shown.size) { showFilter = false }
+}
+
+@Composable
+private fun HomeTopBar(vm: MainViewModel, focus: FocusRequester) {
+    val focusManager = LocalFocusManager.current
+    val on = MaterialTheme.colorScheme.onBackground
+    Row(
+        Modifier.fillMaxWidth().height(TopBarH).padding(start = 12.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (vm.searching) {
+            BasicTextField(
+                value = vm.query, onValueChange = { vm.onQuery(it) }, singleLine = true,
+                textStyle = TextStyle(color = on, fontSize = 15.sp),
+                cursorBrush = SolidColor(on),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = {
+                    focusManager.clearFocus(); vm.submitSearch(vm.query)
+                }),
+                modifier = Modifier.weight(1f).height(38.dp).clip(RoundedCornerShape(19.dp)).background(Chip)
+                    .focusRequester(focus).onFocusChanged { if (it.isFocused) vm.reopenSuggestions() },
+                decorationBox = { inner ->
+                    Box(Modifier.fillMaxSize().padding(horizontal = 16.dp), Alignment.CenterStart) {
+                        if (vm.query.isEmpty()) Text(L.t("সার্চ করুন"), color = Sub, fontSize = 15.sp)
+                        inner()
                     }
-                    items(shown) { v -> VideoCard(v, onChannel = { vm.openChannel(v.channelUrl) }) { vm.play(v.url) } }
                 }
+            )
+            IconButton(onClick = { vm.closeSearch() }) { Icon(Icons.Filled.Close, null) }
+        } else {
+            Icon(Icons.Filled.PlayCircle, null, tint = YtRed, modifier = Modifier.size(28.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("TubeX", fontWeight = FontWeight.Bold, fontSize = 20.sp, modifier = Modifier.weight(1f))
+            IconButton(onClick = { vm.openSearch() }) { Icon(Icons.Filled.Search, null) }
+        }
+    }
+}
+
+@Composable
+private fun CategoryRow(vm: MainViewModel, selected: Int, onPick: (Int) -> Unit) {
+    val on = MaterialTheme.colorScheme.onBackground
+    val chips = listOf(L.t("আপনার জন্য"), L.t("গান"), L.t("গেমিং"), L.t("খবর"), L.t("লাইভ"), L.t("রান্না"), L.t("ক্রিকেট"))
+    LazyRow(
+        Modifier.fillMaxWidth().height(ChipsH),
+        contentPadding = PaddingValues(horizontal = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        items(chips.size) { i ->
+            val sel = i == selected
+            Text(
+                chips[i], color = if (sel) Bg else on,
+                fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                    .background(if (sel) on else Chip)
+                    .clickable { onPick(i); if (i == 0) vm.loadForYou() else vm.load(chips[i]) }
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            )
+        }
+    }
+}
+
+/** সার্চ রেজাল্টে ক্যাটাগরির বদলে ফিল্টার */
+@Composable
+private fun SearchFilterRow(vm: MainViewModel, onOpen: () -> Unit) {
+    val on = MaterialTheme.colorScheme.onBackground
+    LazyRow(
+        Modifier.fillMaxWidth().height(ChipsH),
+        contentPadding = PaddingValues(horizontal = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        item {
+            Row(
+                Modifier.clip(RoundedCornerShape(8.dp))
+                    .background(if (vm.filtersActive) on else Chip)
+                    .clickable(onClick = onOpen)
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Outlined.FilterList, null, Modifier.size(18.dp), tint = if (vm.filtersActive) Bg else on)
+                Spacer(Modifier.width(6.dp))
+                Text(L.t("ফিল্টার"), fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                    color = if (vm.filtersActive) Bg else on)
+            }
+        }
+        if (vm.fDate != 0) item { ActiveFilterChip(L.t(SearchFilter.dates[vm.fDate])) { vm.setDateFilter(0) } }
+        if (vm.fDuration != 0) item { ActiveFilterChip(L.t(SearchFilter.durations[vm.fDuration])) { vm.setDurationFilter(0) } }
+        if (vm.fSort != 0) item { ActiveFilterChip(L.t(SearchFilter.sorts[vm.fSort])) { vm.setSortFilter(0) } }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HomeFeed(vm: MainViewModel, shown: List<VideoItem>, listState: LazyListState, top: Dp, bottom: Dp) {
+    val pullState = rememberPullToRefreshState()
+    PullToRefreshBox(
+        isRefreshing = vm.refreshing, onRefresh = { vm.refreshFeed() }, state = pullState,
+        modifier = Modifier.fillMaxSize(),
+        indicator = {
+            PullToRefreshDefaults.Indicator(
+                state = pullState, isRefreshing = vm.refreshing,
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = top)
+            )
+        }
+    ) {
+        LazyColumn(
+            state = listState, modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(top = top, bottom = bottom)
+        ) {
+            if (vm.feedLoading) {
+                // সার্চ/ক্যাটাগরি বদলালে স্কেলিটন লোডিং
+                item { VideoListSkeleton(3) }
+            } else {
+                vm.error?.let { e -> item { Text(e, color = Sub, modifier = Modifier.padding(16.dp)) } }
+                if (shown.isEmpty() && vm.feed.isNotEmpty()) item {
+                    Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(L.t("ফিল্টারে কোনো ভিডিও মেলেনি"), color = Sub)
+                        TextButton(onClick = { vm.resetFilters() }) { Text(L.t("ফিল্টার মুছুন")) }
+                    }
+                }
+                items(shown) { v -> VideoCard(v, onChannel = { vm.openChannel(v.channelUrl) }) { vm.play(v.url) } }
             }
         }
     }
+}
 
-    if (showFilter) ModalBottomSheet(onDismissRequest = { showFilter = false }, containerColor = Chip) {
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FilterSheet(vm: MainViewModel, count: Int, onDismiss: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Chip) {
         Column(
             Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp).navigationBarsPadding(),
             verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -439,7 +579,7 @@ fun HomeTab(vm: MainViewModel) {
             FilterGroup(L.t("আপলোডের সময়"), SearchFilter.dates, vm.fDate) { vm.setDateFilter(it) }
             FilterGroup(L.t("দৈর্ঘ্য"), SearchFilter.durations, vm.fDuration) { vm.setDurationFilter(it) }
             FilterGroup(L.t("সাজান"), SearchFilter.sorts, vm.fSort) { vm.setSortFilter(it) }
-            Text(L.f("{0} টি ফলাফল", shown.size), color = Sub, fontSize = 12.sp)
+            Text(L.f("{0} টি ফলাফল", count), color = Sub, fontSize = 12.sp)
         }
     }
 }
@@ -459,7 +599,7 @@ private fun FilterGroup(title: String, options: List<String>, selected: Int, onP
 private fun ActiveFilterChip(label: String, onClear: () -> Unit) {
     Row(
         Modifier.clip(RoundedCornerShape(8.dp)).background(Chip).clickable(onClick = onClear)
-            .padding(start = 12.dp, end = 8.dp, top = 7.dp, bottom = 7.dp),
+            .padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium)

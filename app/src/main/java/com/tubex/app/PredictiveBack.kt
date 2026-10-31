@@ -31,14 +31,18 @@ fun rememberPredictiveBack(enabled: Boolean = true, onBack: () -> Unit): BackAni
     val anim = remember { BackAnim() }
     val scope = rememberCoroutineScope()
     val currentOnBack by rememberUpdatedState(onBack)
+    fun settle(ms: Int = 240) {
+        val from = anim.progress
+        scope.launch { animate(from, 0f, animationSpec = tween(ms)) { v, _ -> anim.progress = v } }
+    }
     PredictiveBackHandler(enabled) { events ->
         try {
             events.collect { e -> anim.progress = e.progress; anim.edge = e.swipeEdge }
+            // ছাড়লে: পরের স্ক্রিনের স্লাইড/ফেড ট্রানজিশন চলতে থাকে, আর ছোট হওয়া স্ক্রিনটি একসাথে স্বাভাবিক আকারে ফেরে
             currentOnBack()
-            anim.progress = 0f
+            settle()
         } catch (c: CancellationException) {
-            val from = anim.progress
-            scope.launch { animate(from, 0f, animationSpec = tween(180)) { v, _ -> anim.progress = v } }
+            settle(180)
             throw c
         }
     }
@@ -51,6 +55,7 @@ fun Modifier.predictiveBackLayer(anim: BackAnim): Modifier = this.graphicsLayer 
     if (p > 0f) {
         val s = 1f - 0.1f * p
         scaleX = s; scaleY = s
+        alpha = 1f - 0.25f * p          // ক্রসফেড: নিচের স্ক্রিন আবছা ফুটে ওঠে
         val dir = if (anim.edge == BackEventCompat.EDGE_RIGHT) -1f else 1f
         translationX = dir * 8.dp.toPx() * p
         shape = RoundedCornerShape(28.dp * p)
