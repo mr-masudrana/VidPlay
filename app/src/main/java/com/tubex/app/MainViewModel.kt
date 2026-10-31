@@ -109,6 +109,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** হোম ট্যাবে আবার ট্যাপ করলে বাড়ে: তালিকা স্মুথভাবে ওপরে ওঠে */
     var homeTopTick by mutableStateOf(0); private set
     fun scrollHomeToTop() { homeTopTick++ }
+    /** নির্বাচিত ক্যাটাগরি চিপ (সার্চ খুললে/বন্ধ করলেও মনে থাকে) */
+    var chipIndex by mutableStateOf(0); private set
+    private var chipQuery: String? = null
+    /** ক্যাটাগরি/আপনার-জন্য ফিডের ক্যাশ: একই ফিডে ফিরলে আবার লোড হয় না (পুল-টু-রিফ্রেশে নতুন হয়) */
+    private val feedCache = HashMap<String, Pair<Long, List<VideoItem>>>()
+    private val feedTtlMs = 10 * 60_000L
+    private fun cachedFeed(key: String): List<VideoItem>? =
+        feedCache[key]?.takeIf { System.currentTimeMillis() - it.first < feedTtlMs && it.second.isNotEmpty() }?.second
+    private fun putFeed(key: String, list: List<VideoItem>) {
+        if (list.isNotEmpty()) feedCache[key] = System.currentTimeMillis() to list
+    }
+    fun pickCategory(i: Int, name: String) {
+        chipIndex = i; chipQuery = if (i == 0) null else name
+        if (i == 0) loadForYou() else load(name)
+    }
     private var feedKind = 0            // 0 আপনার জন্য, 1 ক্যাটাগরি/ট্রেন্ডিং, 2 সার্চ
     private var feedQuery: String? = null
     /** ফিডটি সার্চ রেজাল্ট হলে true (তখন ক্যাটাগরির বদলে ফিল্টার দেখায়) */
@@ -303,6 +318,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // ---------- ফিড ----------
     fun load(query: String?, search: Boolean = false, silent: Boolean = false): Job {
         feedJob?.cancel()
+        val key = "cat:${query.orEmpty()}"
+        if (!search && !silent) cachedFeed(key)?.let { c ->
+            feedKind = 1; feedQuery = query
+            isSearchResult = false; resetFilters()
+            feed = c; error = null
+            loading = false; feedLoading = false; refreshing = false
+            return viewModelScope.launch { }
+        }
         val job = viewModelScope.launch {
             feedKind = if (search) 2 else 1; feedQuery = query
             if (silent) refreshing = true else {
@@ -313,6 +336,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             try {
                 val r = filterBlocked(if (query.isNullOrBlank()) YtRepository.trending() else YtRepository.search(query))
+                if (!search) putFeed(key, r)
                 if (r.isNotEmpty() || !silent) feed = r
                 if (feed.isEmpty()) error = L.t("কোনো ভিডিও পাওয়া যায়নি") else error = null
             } catch (e: CancellationException) { throw e
@@ -328,6 +352,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun loadForYou(silent: Boolean = false): Job {
         feedJob?.cancel()
+        if (!silent) cachedFeed("foryou")?.let { c ->
+            feedKind = 0; feedQuery = null
+            isSearchResult = false; resetFilters()
+            feed = c; error = null
+            loading = false; feedLoading = false; refreshing = false
+            return viewModelScope.launch { }
+        }
         val job = viewModelScope.launch {
             feedKind = 0; feedQuery = null
             if (silent) refreshing = true else {
@@ -351,6 +382,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         subs.value.map { it.name.lowercase() }.toSet()
                     )
                 )
+                putFeed("foryou", r)
                 if (r.isNotEmpty() || !silent) feed = r
                 if (feed.isEmpty()) error = L.t("কোনো ভিডিও পাওয়া যায়নি") else error = null
             } catch (e: CancellationException) { throw e
@@ -703,7 +735,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- সার্চ ও লিংক ----------
     fun openSearch() { searching = true; showSuggestions = true; suggestions = emptyList() }
-    fun closeSearch() { searching = false; showSuggestions = false; query = ""; loadForYou() }
+    fun closeSearch() {
+        searching = false; showSuggestions = false; query = ""
+        // কিছু সার্চ না করে বন্ধ করলে ফিড যেমন ছিল তেমনই থাকে; সার্চ রেজাল্ট থাকলে আগের ক্যাটাগরির ফিড ক্যাশ থেকে ফেরে
+        if (isSearchResult) { if (chipIndex == 0) loadForYou() else load(chipQuery) }
+    }
     fun reopenSuggestions() { showSuggestions = true }
 
     fun onQuery(q: String) {

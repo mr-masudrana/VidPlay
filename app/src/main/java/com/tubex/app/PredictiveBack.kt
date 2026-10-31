@@ -7,11 +7,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -27,7 +25,11 @@ class BackAnim {
  * পুরনো ফোনে সাধারণ ব্যাক বাটনের মতোই কাজ করে।
  */
 @Composable
-fun rememberPredictiveBack(enabled: Boolean = true, onBack: () -> Unit): BackAnim {
+fun rememberPredictiveBack(
+    enabled: Boolean = true,
+    fadeOutOnCommit: Boolean = false,
+    onBack: () -> Unit
+): BackAnim {
     val anim = remember { BackAnim() }
     val scope = rememberCoroutineScope()
     val currentOnBack by rememberUpdatedState(onBack)
@@ -38,9 +40,15 @@ fun rememberPredictiveBack(enabled: Boolean = true, onBack: () -> Unit): BackAni
     PredictiveBackHandler(enabled) { events ->
         try {
             events.collect { e -> anim.progress = e.progress; anim.edge = e.swipeEdge }
-            // ছাড়লে: পরের স্ক্রিনের স্লাইড/ফেড ট্রানজিশন চলতে থাকে, আর ছোট হওয়া স্ক্রিনটি একসাথে স্বাভাবিক আকারে ফেরে
-            currentOnBack()
-            settle()
+            if (fadeOutOnCommit) {
+                // ওভারলে স্ক্রিন (প্লেয়ার/চ্যানেল): ছাড়লে বর্তমান পেজ পুরোপুরি মিলিয়ে যায়, নিচের আগের পেজ ফুটে ওঠে
+                scope.launch { animate(anim.progress, 1f, animationSpec = tween(240)) { v, _ -> anim.progress = v } }
+                currentOnBack()
+            } else {
+                // ট্যাব/সার্চ: পেজ বদলে যায়, আর ফিকে হয়ে থাকা কন্টেন্ট স্বাভাবিক অবস্থায় ফেরে (নতুন পেজ ফেড-ইন হয়)
+                currentOnBack()
+                settle()
+            }
         } catch (c: CancellationException) {
             settle(180)
             throw c
@@ -49,23 +57,15 @@ fun rememberPredictiveBack(enabled: Boolean = true, onBack: () -> Unit): BackAni
     return anim
 }
 
-/** স্ক্রিন ছোট হয়ে সোয়াইপের দিকে সরে যায়, কোণা গোল হয় (Material predictive back ডিজাইন) */
+/** ব্যাক জেসচারে বর্তমান পেজ আঙুলের সাথে সাথে ধীরে ধীরে মিলিয়ে যায় (স্কেল/সরানো/গোল কোণা নেই) */
 fun Modifier.predictiveBackLayer(anim: BackAnim): Modifier = this.graphicsLayer {
     val p = anim.progress.coerceIn(0f, 1f)
-    if (p > 0f) {
-        val s = 1f - 0.1f * p
-        scaleX = s; scaleY = s
-        alpha = 1f - 0.25f * p          // ক্রসফেড: নিচের স্ক্রিন আবছা ফুটে ওঠে
-        val dir = if (anim.edge == BackEventCompat.EDGE_RIGHT) -1f else 1f
-        translationX = dir * 8.dp.toPx() * p
-        shape = RoundedCornerShape(28.dp * p)
-        clip = true
-    }
+    if (p > 0f) alpha = 1f - p
 }
 
 /** একটি পুরো স্ক্রিনকে প্রেডিক্টিভ ব্যাক অ্যানিমেশনসহ মোড়ায় */
 @Composable
 fun PredictiveBackScreen(enabled: Boolean = true, onBack: () -> Unit, content: @Composable BoxScope.() -> Unit) {
-    val anim = rememberPredictiveBack(enabled, onBack)
+    val anim = rememberPredictiveBack(enabled, fadeOutOnCommit = true, onBack = onBack)
     Box(Modifier.fillMaxSize().predictiveBackLayer(anim), content = content)
 }

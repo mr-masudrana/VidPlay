@@ -193,25 +193,25 @@ val LocalVm = staticCompositionLocalOf<MainViewModel?> { null }
 fun YtApp(vm: MainViewModel) = CompositionLocalProvider(LocalVm provides vm) {
     BoxWithConstraints(Modifier.fillMaxSize().background(Bg)) {
         MainScaffold(vm)
-        // চ্যানেল পেজ: ডান দিক থেকে স্লাইড + ফেড; ব্যাক জেসচারে ছোট হয়ে সরে যায়, ছাড়লে স্লাইড + ফেডে বেরিয়ে যায়
+        // চ্যানেল পেজ: ডান দিক থেকে স্লাইড + ফেড; ব্যাক জেসচারে ধীরে ধীরে মিলিয়ে গিয়ে আগের পেজ দেখা যায়
         AnimatedVisibility(
             visible = vm.channelOpen, modifier = Modifier.fillMaxSize(),
             enter = slideInHorizontally(tween(280)) { it / 3 } + fadeIn(tween(280)),
-            exit = slideOutHorizontally(tween(240)) { it / 3 } + fadeOut(tween(240))
+            exit = fadeOut(tween(240))
         ) {
             PredictiveBackScreen(enabled = vm.channelOpen, onBack = { vm.closeChannel() }) { ChannelScreen(vm) }
         }
         if (vm.active && !vm.expanded && vm.floatingMini) {
             FloatingPlayer(vm, constraints.maxWidth.toFloat(), constraints.maxHeight.toFloat())
         }
-        // প্লেয়ার: নিচ থেকে স্লাইড-আপ + ফেড; মিনিমাইজে নিচে নেমে ফেড আউট
+        // প্লেয়ার: নিচ থেকে স্লাইড-আপ + ফেড; ব্যাক/মিনিমাইজে মিলিয়ে যায়
         val landscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
             android.content.res.Configuration.ORIENTATION_LANDSCAPE
         val playerShown = vm.expanded && (vm.active || vm.loadingNew)
         AnimatedVisibility(
             visible = playerShown, modifier = Modifier.fillMaxSize(),
             enter = slideInVertically(tween(300)) { it / 2 } + fadeIn(tween(300)),
-            exit = slideOutVertically(tween(260)) { it / 2 } + fadeOut(tween(260))
+            exit = fadeOut(tween(260))
         ) {
             PredictiveBackScreen(enabled = playerShown && !landscape && !vm.inPip, onBack = { vm.minimize() }) {
                 PlayerScreen(vm)
@@ -369,7 +369,6 @@ fun HomeScreen(vm: MainViewModel, bars: BarsState, bottomPad: Dp) {
     val density = LocalDensity.current
     val focus = remember { FocusRequester() }
     val listState = rememberLazyListState()
-    var chip by remember(vm.searching) { mutableStateOf(0) }
     var showFilter by remember { mutableStateOf(false) }
     val statusDp = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val panel = vm.searching && vm.showSuggestions
@@ -430,7 +429,7 @@ fun HomeScreen(vm: MainViewModel, bars: BarsState, bottomPad: Dp) {
             HomeTopBar(vm, focus)
             if (!panel) {
                 if (vm.isSearchResult) SearchFilterRow(vm) { showFilter = true }
-                else CategoryRow(vm, chip) { chip = it }
+                else CategoryRow(vm, vm.chipIndex)
             }
         }
         if (statusDp > 0.dp) Box(Modifier.align(Alignment.TopStart).fillMaxWidth().height(statusDp).background(Bg))
@@ -476,7 +475,7 @@ private fun HomeTopBar(vm: MainViewModel, focus: FocusRequester) {
 }
 
 @Composable
-private fun CategoryRow(vm: MainViewModel, selected: Int, onPick: (Int) -> Unit) {
+private fun CategoryRow(vm: MainViewModel, selected: Int) {
     val on = MaterialTheme.colorScheme.onBackground
     val chips = listOf(L.t("আপনার জন্য"), L.t("গান"), L.t("গেমিং"), L.t("খবর"), L.t("লাইভ"), L.t("রান্না"), L.t("ক্রিকেট"))
     LazyRow(
@@ -489,11 +488,11 @@ private fun CategoryRow(vm: MainViewModel, selected: Int, onPick: (Int) -> Unit)
             val sel = i == selected
             Text(
                 chips[i], color = if (sel) Bg else on,
-                fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                fontSize = 12.sp, fontWeight = FontWeight.Medium,
                 modifier = Modifier.clip(RoundedCornerShape(8.dp))
                     .background(if (sel) on else Chip)
-                    .clickable { onPick(i); if (i == 0) vm.loadForYou() else vm.load(chips[i]) }
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .clickable { if (i != selected) vm.pickCategory(i, chips[i]) }
+                    .padding(horizontal = 10.dp, vertical = 5.dp)
             )
         }
     }
@@ -742,7 +741,7 @@ fun fmtTime(s: Long): String {
 }
 
 // ---------- ভাসমান মিনি প্লেয়ার (PiP-এর মতো) ----------
-/** ব্যাক করলে ভিডিও ছোট ভাসমান উইন্ডোতে চলে। টেনে সরানো যায়, ছাড়লে পাশে লেগে যায়। ট্যাপ = কন্ট্রোল, ডবল ট্যাপ = বড় করা। */
+/** ব্যাক করলে ভিডিও ছোট ভাসমান উইন্ডোতে চলে। টেনে সরানো যায়, ছাড়লে পাশে লেগে যায়। ট্যাপ = প্লেয়ার পেজ খোলা; বামে উপরে প্লে/পজ, ডানে উপরে বন্ধ। */
 @Composable
 fun FloatingPlayer(vm: MainViewModel, cw: Float, ch: Float) {
     val density = LocalDensity.current
@@ -755,10 +754,6 @@ fun FloatingPlayer(vm: MainViewModel, cw: Float, ch: Float) {
     val x = if (vm.pipX.isNaN()) defaultX else vm.pipX.coerceIn(0f, (cw - w).coerceAtLeast(0f))
     val y = if (vm.pipY.isNaN()) defaultY else vm.pipY.coerceIn(0f, (ch - h).coerceAtLeast(0f))
 
-    var controls by remember { mutableStateOf(true) }
-    LaunchedEffect(controls, vm.isPlaying) {
-        if (controls && vm.isPlaying) { delay(3000); controls = false }
-    }
     val frac = if (vm.durationMs > 0) (vm.positionMs.toFloat() / vm.durationMs).coerceIn(0f, 1f) else 0f
 
     Box(
@@ -782,7 +777,7 @@ fun FloatingPlayer(vm: MainViewModel, cw: Float, ch: Float) {
         Box(
             Modifier.matchParentSize()
                 .pointerInput(Unit) {
-                    detectTapGestures(onTap = { controls = !controls }, onDoubleTap = { vm.expand() })
+                    detectTapGestures(onTap = { vm.expand() })
                 }
                 .pointerInput(cw, ch, w, h) {
                     detectDragGestures(
@@ -801,21 +796,16 @@ fun FloatingPlayer(vm: MainViewModel, cw: Float, ch: Float) {
                 }
         )
 
-        if (controls) Box(Modifier.matchParentSize().background(Color(0x55000000))) {
-            IconButton(onClick = { vm.expand() }, modifier = Modifier.align(Alignment.TopStart).size(36.dp)) {
-                Icon(Icons.Filled.Fullscreen, null, tint = Color.White)
+        // শুধু ভাসমান প্লেয়ারে ট্যাপ করলে প্লেয়ার পেজ খোলে; বাটনগুলো সবসময় দেখা যায়
+        Box(Modifier.matchParentSize()) {
+            IconButton(
+                onClick = { if (vm.isPlaying) vm.player.pause() else vm.player.play() },
+                modifier = Modifier.align(Alignment.TopStart).size(36.dp)
+            ) {
+                Icon(if (vm.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, null, tint = Color.White)
             }
             IconButton(onClick = { vm.close() }, modifier = Modifier.align(Alignment.TopEnd).size(36.dp)) {
                 Icon(Icons.Filled.Close, null, tint = Color.White)
-            }
-            IconButton(
-                onClick = { if (vm.isPlaying) vm.player.pause() else vm.player.play() },
-                modifier = Modifier.align(Alignment.Center).size(48.dp)
-            ) {
-                Icon(
-                    if (vm.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, null,
-                    tint = Color.White, modifier = Modifier.size(32.dp)
-                )
             }
         }
 

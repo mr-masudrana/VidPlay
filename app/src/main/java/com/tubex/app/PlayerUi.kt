@@ -168,6 +168,18 @@ private fun PlayerBox(
                     setShowNextButton(true); setShowPreviousButton(true)
                     // কন্ট্রোলারের নিচের ডানের ডিফল্ট সেটিংস গিয়ার বাদ (সেটিংস এখন ওপরে ডানে)
                     findViewById<View>(androidx.media3.ui.R.id.exo_settings)?.visibility = View.GONE
+                    // ExoPlayer-এর নিজস্ব কালো স্ক্রিম/ব্যাকগ্রাউন্ড সরানো
+                    val dn = c.resources.displayMetrics.density
+                    findViewById<View>(androidx.media3.ui.R.id.exo_controls_background)?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                    // প্রগ্রেস বার একদম নিচে নামানো; সময়ের সারি তার ওপরে উঠে আসে
+                    findViewById<View>(androidx.media3.ui.R.id.exo_bottom_bar)?.apply {
+                        setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                        translationY = -BAR_LIFT_DP * dn
+                    }
+                    findViewById<View>(androidx.media3.ui.R.id.exo_progress)?.addOnLayoutChangeListener { v, _, _, _, bottom, _, _, _, _ ->
+                        val parentH = (v.parent as? View)?.height ?: return@addOnLayoutChangeListener
+                        v.translationY = parentH - bottom + 12 * dn   // বারের মাঝ বরাবর নিচের কিনারা থেকে ~১২dp ওপরে
+                    }
                     controls = isControllerFullyVisible
                     setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { v ->
                         controls = v == View.VISIBLE
@@ -243,7 +255,7 @@ private fun PlayerBox(
         // নিচের ডানে (আগে যেখানে সেটিংস গিয়ার ছিল): সাবটাইটেল, মিউট, মাপ (ল্যান্ডস্কেপ), ফুলস্ক্রিন
         if (overlay) AnimatedVisibility(showBars, Modifier.align(Alignment.BottomEnd)) {
             Row(
-                Modifier.padding(end = 8.dp, bottom = 4.dp),
+                Modifier.padding(end = 8.dp, bottom = (BAR_LIFT_DP + 4).dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 PlayerIconButton(if (vm.muted) Icons.Rounded.VolumeOff else Icons.Rounded.VolumeUp) {
@@ -265,6 +277,8 @@ private fun PlayerBox(
     if (showSettings) PlayerSettingsSheet(vm) { showSettings = false }
 }
 
+private const val BAR_LIFT_DP = 20
+
 /** ভিডিও লোড হওয়া পর্যন্ত: জানা থাকলে থাম্বনেইল, তার ওপর shimmer ও লোডিং রিং */
 @Composable
 private fun LoadingPlayerBox(hint: VideoItem?, modifier: Modifier, onBack: () -> Unit) {
@@ -276,11 +290,11 @@ private fun LoadingPlayerBox(hint: VideoItem?, modifier: Modifier, onBack: () ->
     }
 }
 
-/** ভিডিওর ওপরে স্পষ্ট দেখার জন্য আধা-স্বচ্ছ গোল ব্যাকগ্রাউন্ডসহ রাউন্ডেড আইকন বাটন */
+/** প্লেয়ারের ওপরের রাউন্ডেড আইকন বাটন (আইকনের নিচে কোনো কালো ওভারলে/ব্যাকগ্রাউন্ড নেই) */
 @Composable
 private fun PlayerIconButton(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color = Color.White, onClick: () -> Unit) {
     Box(
-        Modifier.size(40.dp).clip(CircleShape).background(Color(0x59000000)).clickable(onClick = onClick),
+        Modifier.size(40.dp).clip(CircleShape).clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) { Icon(icon, null, tint = tint, modifier = Modifier.size(26.dp)) }
 }
