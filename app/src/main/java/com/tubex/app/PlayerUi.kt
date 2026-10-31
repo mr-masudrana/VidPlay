@@ -204,7 +204,7 @@ private fun PlayerBox(
                 }
             },
             update = {
-                it.useController = overlay && !(vm.audioOnly && vm.current != null)
+                it.useController = overlay && !vm.audioArt
                 it.resizeMode = if (landscape) when (vm.resizeMode) { 1 -> 4; 2 -> 3; else -> 0 } else 0
                 it.subtitleView?.setFractionalTextSize(sizes[vm.captionSizeIndex.coerceIn(0, 2)])
                 it.subtitleView?.setStyle(captionStyle(vm.captionColorIndex, vm.captionBgIndex))
@@ -212,7 +212,7 @@ private fun PlayerBox(
             modifier = Modifier.fillMaxSize()
         )
 
-        if (vm.audioOnly && vm.current != null) AudioOnlyLayer(vm)
+        if (vm.audioArt) AudioOnlyLayer(vm)
 
         // জেসচার HUD (ব্রাইটনেস/ভলিউম/সিক/স্পিড/মিউট): স্ক্রিনের মাঝে উপরে
         hud?.let {
@@ -239,7 +239,7 @@ private fun PlayerBox(
             }
         }
 
-        val showBars = controls || (vm.audioOnly && vm.current != null)
+        val showBars = controls || vm.audioArt
 
         // ওপরের সারি: বামে মিনিমাইজ; ডানে ক্রোমকাস্ট ও সেটিংস
         if (overlay) AnimatedVisibility(showBars, Modifier.align(Alignment.TopStart).fillMaxWidth()) {
@@ -524,7 +524,7 @@ private fun BoxScope.AudioOnlyLayer(vm: MainViewModel) {
 
     Box(Modifier.matchParentSize().background(Color.Black)) {
         AsyncImage(
-            vm.current?.thumbnails?.lastOrNull()?.url, null, Modifier.fillMaxSize(),
+            vm.audioArtUrl, null, Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop, alpha = 0.45f
         )
     }

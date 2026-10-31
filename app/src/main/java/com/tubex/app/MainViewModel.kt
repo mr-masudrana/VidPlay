@@ -83,6 +83,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var notifyOn by mutableStateOf(prefs.notifyEnabled); private set
     /** সেটিংসের খোলা টপিক পেজ (null = টপিকের তালিকা) */
     var settingsPage by mutableStateOf<Int?>(null)
+    /** লাইব্রেরির খোলা "সব দেখুন" পেজ: 0 ইতিহাস, 1 ফেভারিট, 2 প্লেলিস্ট, 3 ডাউনলোড (null = মূল পেজ) */
+    var libraryPage by mutableStateOf<Int?>(null)
+    /** মূল পেজ থেকে কোন প্লেলিস্ট সরাসরি খুলতে হবে */
+    var libraryOpenPlaylist by mutableStateOf<Long?>(null)
     var notifyHours by mutableStateOf(prefs.notifyHours); private set
     var updateNotifyOn by mutableStateOf(prefs.updateNotify); private set
     var loop by mutableStateOf(false); private set
@@ -148,6 +152,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // প্লেয়ার
     var current by mutableStateOf<StreamInfo?>(null); private set
     var local by mutableStateOf<DownloadEntity?>(null); private set
+    /** শুধু অডিও চলছে (অনলাইন "শুধু অডিও" মোড অথবা ডাউনলোড করা অডিও ফাইল): প্লেয়ারে ভিডিওর বদলে থাম্বনেইল দেখায় */
+    val audioArt: Boolean get() = (audioOnly && current != null) || local?.audioOnly == true
+    val audioArtUrl: String? get() = local?.thumb ?: current?.thumbnails?.lastOrNull()?.url
     var expanded by mutableStateOf(false); private set
     var isPlaying by mutableStateOf(false); private set
     var inPip by mutableStateOf(false)

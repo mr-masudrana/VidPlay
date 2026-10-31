@@ -276,6 +276,7 @@ fun MainScaffold(vm: MainViewModel) {
         skipTabAnim = true
         when {
             vm.tab == 3 && vm.settingsPage != null -> vm.settingsPage = null   // টপিক পেজ থেকে তালিকায়
+            vm.tab == 2 && vm.libraryPage != null -> vm.libraryPage = null     // "সব দেখুন" পেজ থেকে লাইব্রেরির মূল পেজে
             vm.tab != 0 -> vm.tab = 0
             else -> vm.closeSearch()
         }
@@ -289,8 +290,18 @@ fun MainScaffold(vm: MainViewModel) {
         // ব্যাক জেসচার চলার সময় নিচে আগের (হোম) পেজের প্রিভিউ; ওপরের পেজ মিলিয়ে গেলে এটি ফুটে ওঠে
         if (backAnim.progress > 0f) {
             // জেসচার শুরুর মুহূর্তে ঠিক হয়: সেটিংস টপিক পেজ থেকে ব্যাকে নিচে টপিকের তালিকা, নাহলে হোম
-            val settingsList = remember(backAnim.progress > 0f) { vm.tab == 3 && vm.settingsPage != null }
-            if (settingsList) SettingsListPreview(statusDp, bottomDp) else HomePreview(vm, statusDp, bottomDp)
+            val kind = remember(backAnim.progress > 0f) {
+                when {
+                    vm.tab == 3 && vm.settingsPage != null -> 1
+                    vm.tab == 2 && vm.libraryPage != null -> 2
+                    else -> 0
+                }
+            }
+            when (kind) {
+                1 -> SettingsListPreview(statusDp, bottomDp)
+                2 -> LibraryOverviewPreview(vm, statusDp, bottomDp)
+                else -> HomePreview(vm, statusDp, bottomDp)
+            }
         }
         Box(Modifier.fillMaxSize().predictiveBackLayer(backAnim).background(Bg)) {
             // ট্যাব বদলালে ডানে/বামে স্লাইড + ক্রসফেড (ট্যাবের ক্রম অনুযায়ী দিক ঠিক হয়)
@@ -312,7 +323,7 @@ fun MainScaffold(vm: MainViewModel) {
                     Box(Modifier.fillMaxSize().padding(top = statusDp + TopBarH, bottom = bottomDp)) {
                         when (tab) {
                             1 -> SubsTab(vm)
-                            2 -> LibraryTab(vm)
+                            2 -> LibraryTab(vm, skipTabAnim)
                             else -> SettingsTab(vm, skipTabAnim)
                         }
                     }
@@ -321,10 +332,12 @@ fun MainScaffold(vm: MainViewModel) {
                             .height(TopBarH).background(Bg),
                         Alignment.CenterStart
                     ) {
-                        val sp = if (tab == 3) vm.settingsPage else null
+                        val sp = when (tab) { 3 -> vm.settingsPage; 2 -> vm.libraryPage; else -> null }
                         if (sp != null) Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = { vm.settingsPage = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) }
-                            Text(settingsTopicTitle(sp), fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                            IconButton(onClick = { if (tab == 3) vm.settingsPage = null else vm.libraryPage = null }) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, null)
+                            }
+                            Text(if (tab == 3) settingsTopicTitle(sp) else libraryTitle(sp), fontWeight = FontWeight.Bold, fontSize = 20.sp)
                         } else Text(tabs[tab].third, fontWeight = FontWeight.Bold, fontSize = 20.sp, modifier = Modifier.padding(start = 16.dp))
                     }
                 }
@@ -341,6 +354,13 @@ fun MainScaffold(vm: MainViewModel) {
         ) {
             Column(Modifier.graphicsLayer { translationY = bars.fraction * bars.navPx }) {
                 if (vm.active && !vm.expanded && !vm.floatingMini) MiniPlayer(vm)
+                // সেটিংস টপিক পেজ বা লাইব্রেরির "সব দেখুন" পেজে নিচের নেভ বার লুকানো থাকে
+                val navVisible = !((vm.tab == 3 && vm.settingsPage != null) || (vm.tab == 2 && vm.libraryPage != null))
+                AnimatedVisibility(
+                    visible = navVisible,
+                    enter = expandVertically(tween(220)) + fadeIn(tween(220)),
+                    exit = shrinkVertically(tween(200)) + fadeOut(tween(160))
+                ) {
                 Row(
                     Modifier.fillMaxWidth().height(NavH).background(Bg)
                         .onSizeChanged { bars.navPx = it.height.toFloat() }
@@ -351,6 +371,7 @@ fun MainScaffold(vm: MainViewModel) {
                             Modifier.weight(1f).fillMaxHeight().clickable {
                                 if (i == 0 && vm.tab == 0) vm.scrollHomeToTop()
                                 else if (i == 3 && vm.tab == 3) vm.settingsPage = null
+                                else if (i == 2 && vm.tab == 2) vm.libraryPage = null
                                 else vm.tab = i
                             },
                             horizontalAlignment = Alignment.CenterHorizontally,
@@ -364,6 +385,7 @@ fun MainScaffold(vm: MainViewModel) {
                             Text(label, fontSize = 10.sp, color = if (sel) on else Sub, maxLines = 1)
                         }
                     }
+                }
                 }
             }
             Box(Modifier.fillMaxWidth().height(navInsetDp).background(Bg))
@@ -598,6 +620,18 @@ private fun HomeFeed(vm: MainViewModel, shown: List<VideoItem>, listState: LazyL
             }
         }
     }
+}
+
+/** লাইব্রেরির "সব দেখুন" পেজ থেকে ব্যাকে নিচে দেখানো মূল পেজের স্থির প্রিভিউ */
+@Composable
+private fun LibraryOverviewPreview(vm: MainViewModel, statusDp: Dp, bottomDp: Dp) {
+    Box(Modifier.fillMaxSize().background(Bg).padding(top = statusDp + TopBarH, bottom = bottomDp)) {
+        LibraryOverview(vm) { }
+    }
+    Box(
+        Modifier.fillMaxWidth().padding(top = statusDp).height(TopBarH).background(Bg),
+        Alignment.CenterStart
+    ) { Text(L.t("লাইব্রেরি"), fontWeight = FontWeight.Bold, fontSize = 20.sp, modifier = Modifier.padding(start = 16.dp)) }
 }
 
 /** সেটিংস টপিক পেজ থেকে ব্যাকে নিচে দেখানো টপিক তালিকার স্থির প্রিভিউ */
@@ -845,8 +879,8 @@ fun FloatingPlayer(vm: MainViewModel, cw: Float, ch: Float) {
             factory = { c -> PlayerView(c).apply { player = vm.player; useController = false } },
             modifier = Modifier.fillMaxSize()
         )
-        if (vm.audioOnly && vm.current != null) AsyncImage(
-            vm.current?.thumbnails?.lastOrNull()?.url, null, Modifier.fillMaxSize(),
+        if (vm.audioArt) AsyncImage(
+            vm.audioArtUrl, null, Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop, alpha = 0.6f
         )
 

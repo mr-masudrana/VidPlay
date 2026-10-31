@@ -2,13 +2,32 @@ package com.tubex.app
 
 import android.app.DownloadManager
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.VideoLibrary
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -74,30 +93,191 @@ fun SubsTab(vm: MainViewModel) {
     }
 }
 
-// ---------- লাইব্রেরি: ইতিহাস | ফেভারিট | প্লেলিস্ট | ডাউনলোড ----------
+// ---------- লাইব্রেরি: সেকশন (ইতিহাস | ফেভারিট | প্লেলিস্ট | ডাউনলোড) + "সব দেখুন" পেজ ----------
+private fun libraryTitles() = listOf(L.t("ইতিহাস"), L.t("ফেভারিট"), L.t("প্লেলিস্ট"), L.t("ডাউনলোড"))
+private fun libraryIcon(i: Int): ImageVector = when (i) {
+    0 -> Icons.Outlined.History
+    1 -> Icons.Filled.Favorite
+    2 -> Icons.Outlined.VideoLibrary
+    else -> Icons.Outlined.Download
+}
+
+/** টপ বারে দেখানোর জন্য সেকশনের নাম */
+fun libraryTitle(i: Int): String = libraryTitles().getOrElse(i) { L.t("লাইব্রেরি") }
+
 @Composable
-fun LibraryTab(vm: MainViewModel) {
-    var sub by remember { mutableStateOf(0) }
-    val on = MaterialTheme.colorScheme.onBackground
-    Column {
-        LazyRow(
-            contentPadding = PaddingValues(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            val names = listOf(L.t("ইতিহাস"), L.t("ফেভারিট"), L.t("প্লেলিস্ট"), L.t("ডাউনলোড"))
-            items(names.size) { i ->
-                val sel = sub == i
-                Text(
-                    names[i], color = if (sel) Bg else on, fontSize = 14.sp,
-                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(if (sel) on else Chip)
-                        .clickable { sub = i }.padding(horizontal = 14.dp, vertical = 7.dp)
-                )
+fun LibraryTab(vm: MainViewModel, skipAnim: Boolean = false) {
+    AnimatedContent(
+        targetState = vm.libraryPage,
+        modifier = Modifier.fillMaxSize(),
+        transitionSpec = {
+            when {
+                skipAnim -> EnterTransition.None togetherWith ExitTransition.None
+                targetState != null ->
+                    (slideInHorizontally(tween(260)) { it / 4 } + fadeIn(tween(260))) togetherWith fadeOut(tween(160))
+                else ->
+                    fadeIn(tween(220)) togetherWith (slideOutHorizontally(tween(240)) { it / 4 } + fadeOut(tween(200)))
             }
-        }
-        when (sub) {
+        },
+        label = "libraryPage"
+    ) { p ->
+        when (p) {
+            null -> LibraryOverview(vm) { vm.libraryPage = it }
             0 -> HistoryList(vm)
             1 -> FavoriteList(vm)
             2 -> PlaylistSection(vm)
             else -> DownloadList(vm)
+        }
+    }
+}
+
+@Composable
+private fun SectionHeader(i: Int, count: Int, onAll: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 14.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(Modifier.size(32.dp).clip(CircleShape).background(Chip), Alignment.Center) {
+            Icon(libraryIcon(i), null, tint = YtRed, modifier = Modifier.size(18.dp))
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(libraryTitles()[i], fontSize = 17.sp, fontWeight = FontWeight.Bold)
+        if (count > 0) Text("  $count", color = Sub, fontSize = 13.sp)
+        Spacer(Modifier.weight(1f))
+        TextButton(onClick = onAll) {
+            Text(L.t("সব দেখুন"), fontSize = 13.sp)
+            Icon(Icons.Filled.ChevronRight, null, modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+@Composable
+private fun EmptyHint(text: String) {
+    Box(
+        Modifier.padding(horizontal = 16.dp).fillMaxWidth().height(72.dp)
+            .clip(RoundedCornerShape(14.dp)).background(Chip.copy(alpha = 0.5f)),
+        Alignment.Center
+    ) { Text(text, color = Sub, fontSize = 13.sp) }
+}
+
+/** ক্যারোসেলের ছোট কার্ড: থাম্বনেইল + (ঐচ্ছিক) ব্যাজ/প্রগ্রেস + শিরোনাম + নিচের লেখা */
+@Composable
+private fun MiniCard(
+    thumb: String?, title: String, sub: String, onClick: () -> Unit,
+    progress: Float? = null, badge: String? = null, overlayIcon: ImageVector? = null
+) {
+    Column(Modifier.width(168.dp).clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick)) {
+        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(12.dp)).background(Chip)) {
+            if (thumb != null) AsyncImage(thumb, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            if (overlayIcon != null) Icon(
+                overlayIcon, null, tint = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.9f),
+                modifier = Modifier.align(Alignment.Center).size(30.dp)
+            )
+            if (badge != null) Text(
+                badge, color = androidx.compose.ui.graphics.Color.White, fontSize = 10.sp, fontWeight = FontWeight.Medium,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp)
+                    .clip(RoundedCornerShape(6.dp)).background(androidx.compose.ui.graphics.Color(0xB3000000))
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            )
+            if (progress != null && progress > 0f) LinearProgressIndicator(
+                progress = { progress.coerceIn(0f, 1f) },
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp),
+                color = YtRed, trackColor = androidx.compose.ui.graphics.Color(0x66000000)
+            )
+        }
+        Text(
+            title, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 6.dp, start = 2.dp, end = 2.dp)
+        )
+        Text(
+            sub, color = Sub, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 2.dp, start = 2.dp, end = 2.dp, bottom = 4.dp)
+        )
+    }
+}
+
+@Composable
+private fun PlaylistMiniCard(vm: MainViewModel, p: PlaylistRow, onOpen: () -> Unit) {
+    val items by remember(p.id) { vm.playlistItems(p.id) }.collectAsState(initial = emptyList())
+    MiniCard(
+        thumb = items.firstOrNull()?.thumb, title = p.name,
+        sub = L.f("{0} টি ভিডিও", p.itemCount), onClick = onOpen,
+        badge = if (p.itemCount > 0) "${p.itemCount}" else null,
+        overlayIcon = if (items.firstOrNull()?.thumb == null) Icons.Outlined.VideoLibrary else null
+    )
+}
+
+/** লাইব্রেরির মূল পেজ: প্রতিটি সেকশনে সর্বশেষ কয়েকটি আইটেম; "সব দেখুন" চাপলে সম্পূর্ণ তালিকার পেজ */
+@Composable
+fun LibraryOverview(vm: MainViewModel, onOpen: (Int) -> Unit) {
+    val history by vm.history.collectAsState()
+    val favs by vm.favorites.collectAsState()
+    val lists by vm.playlists.collectAsState()
+    val dls by vm.downloads.collectAsState()
+    val favSorted = remember(favs) { favs.sortedByDescending { it.addedAt } }
+
+    LazyColumn(contentPadding = PaddingValues(top = 2.dp, bottom = 24.dp)) {
+        // ইতিহাস
+        item {
+            SectionHeader(0, history.size) { onOpen(0) }
+            if (history.isEmpty()) EmptyHint(
+                if (vm.saveWatchHist) L.t("ইতিহাস খালি") else L.t("ওয়াচ হিস্টরি বন্ধ আছে (সেটিংস থেকে চালু করুন)")
+            ) else LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                items(history.take(10), key = { it.url }) { h ->
+                    MiniCard(
+                        h.thumb, h.title, h.channel, onClick = { vm.play(h.url) },
+                        progress = if (h.durationSec > 0) h.positionMs / (h.durationSec * 1000f) else null
+                    )
+                }
+            }
+        }
+        // ফেভারিট
+        item {
+            SectionHeader(1, favs.size) { onOpen(1) }
+            if (favSorted.isEmpty()) EmptyHint(L.t("কোনো ফেভারিট নেই"))
+            else LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                items(favSorted.take(10).size) { i ->
+                    val f = favSorted[i]
+                    MiniCard(f.thumb, f.title, f.channel, onClick = {
+                        vm.playQueueItems(favSorted.map { QItem(it.url, it.title, it.channel, it.thumb) }, i)
+                    })
+                }
+            }
+        }
+        // প্লেলিস্ট
+        item {
+            SectionHeader(2, lists.size) { onOpen(2) }
+            if (lists.isEmpty()) EmptyHint(L.t("কোনো প্লেলিস্ট নেই"))
+            else LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                items(lists.take(10), key = { it.id }) { p ->
+                    PlaylistMiniCard(vm, p) { vm.libraryOpenPlaylist = p.id; onOpen(2) }
+                }
+            }
+        }
+        // ডাউনলোড
+        item {
+            SectionHeader(3, dls.size) { onOpen(3) }
+            if (dls.isEmpty()) EmptyHint(L.t("কোনো ডাউনলোড নেই"))
+            else LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                items(dls.take(10), key = { it.id }) { d ->
+                    val ok = d.state == 3 && File(d.path).exists()
+                    val kind = if (d.audioOnly) L.t("অডিও") else if (d.height > 0) "${d.height}p" else L.t("ভিডিও")
+                    val status = when (d.state) {
+                        0 -> L.t("কিউতে অপেক্ষায়")
+                        1 -> L.f("ডাউনলোড হচ্ছে {0}%", d.progress / 10)
+                        2 -> L.f("থামানো ({0}%)", d.progress / 10)
+                        3 -> if (ok) L.t("সম্পন্ন") else L.t("ফাইল পাওয়া যায়নি")
+                        5 -> L.t("মার্জ হচ্ছে…")
+                        else -> L.t("ব্যর্থ — আবার চেষ্টা করুন")
+                    }
+                    MiniCard(
+                        d.thumb, d.title, status,
+                        onClick = { if (ok) vm.playLocal(d) else onOpen(3) },
+                        badge = kind,
+                        progress = if (d.state in listOf(0, 1, 2, 5)) d.progress / 1000f else null
+                    )
+                }
+            }
         }
     }
 }
@@ -113,7 +293,7 @@ private fun MediaRow(
     ) {
         AsyncImage(
             thumb, null, contentScale = ContentScale.Crop,
-            modifier = Modifier.width(128.dp).aspectRatio(16f / 9f).background(Chip)
+            modifier = Modifier.width(128.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)).background(Chip)
         )
         Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
             Text(title, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -159,7 +339,7 @@ private fun HistoryList(vm: MainViewModel) {
                     Modifier.fillMaxWidth().clickable { vm.play(h.url) }.padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    HistoryThumb(h, Modifier.width(128.dp).aspectRatio(16f / 9f))
+                    HistoryThumb(h, Modifier.width(128.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)))
                     Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                         Text(h.title, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Text(h.channel, color = Sub, fontSize = 12.sp, maxLines = 1, modifier = Modifier.padding(top = 4.dp))
@@ -211,6 +391,10 @@ private fun PlaylistSection(vm: MainViewModel) {
     var newName by remember { mutableStateOf("") }
     var renaming by remember { mutableStateOf<PlaylistRow?>(null) }
 
+    val pendingId = vm.libraryOpenPlaylist
+    LaunchedEffect(pendingId, lists) {
+        if (pendingId != null) lists.firstOrNull { it.id == pendingId }?.let { open = it; vm.libraryOpenPlaylist = null }
+    }
     val cur = open
     if (cur != null) {
         PlaylistDetail(vm, cur) { open = null }
@@ -395,6 +579,7 @@ private fun DownloadRow(
         else -> L.t("ব্যর্থ — আবার চেষ্টা করুন")
     }
     val isSel = d.id in selected
+    var showInfo by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth()
             .background(if (isSel) Chip else androidx.compose.ui.graphics.Color.Transparent)
@@ -410,7 +595,7 @@ private fun DownloadRow(
         )
         AsyncImage(
             d.thumb, null, contentScale = ContentScale.Crop,
-            modifier = Modifier.width(128.dp).aspectRatio(16f / 9f).background(Chip)
+            modifier = Modifier.width(128.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)).background(Chip)
         )
         Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
             Text(d.title, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -422,16 +607,47 @@ private fun DownloadRow(
             )
         }
         if (!selecting) {
-            when (d.state) {
-                0, 1 -> IconButton(onClick = { vm.pauseDownload(d.id) }) { Icon(Icons.Filled.Pause, null) }
-                2 -> IconButton(onClick = { vm.resumeDownload(d.id) }) { Icon(Icons.Filled.PlayArrow, null) }
-                4 -> IconButton(onClick = { vm.resumeDownload(d.id) }) { Icon(Icons.Filled.Refresh, null) }
+            // ৩ ডট মেনু: সব অ্যাকশন এক জায়গায়
+            var menu by remember { mutableStateOf(false) }
+            Box {
+                IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, null) }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    @Composable
+                    fun Item(text: String, icon: ImageVector, tint: androidx.compose.ui.graphics.Color? = null, onClick: () -> Unit) =
+                        DropdownMenuItem(
+                            text = { Text(text, color = tint ?: MaterialTheme.colorScheme.onSurface) },
+                            leadingIcon = { Icon(icon, null, tint = tint ?: MaterialTheme.colorScheme.onSurfaceVariant) },
+                            onClick = { menu = false; onClick() }
+                        )
+                    if (done) Item(L.t("প্লে করুন"), Icons.Filled.PlayArrow) { vm.playLocal(d) }
+                    when (d.state) {
+                        0, 1 -> Item(L.t("থামান"), Icons.Filled.Pause) { vm.pauseDownload(d.id) }
+                        2 -> Item(L.t("আবার শুরু করুন"), Icons.Filled.PlayArrow) { vm.resumeDownload(d.id) }
+                        4 -> Item(L.t("আবার চেষ্টা করুন"), Icons.Filled.Refresh) { vm.resumeDownload(d.id) }
+                    }
+                    if (done) {
+                        Item(L.t("গ্যালারিতে সেভ করুন"), Icons.Filled.SaveAlt) { vm.saveToGallery(d) }
+                        Item(L.t("শেয়ার করুন"), Icons.Filled.Share) { vm.shareDownload(d) }
+                    }
+                    Item(L.t("অনলাইনে দেখুন"), Icons.Filled.OpenInNew) { vm.play(d.videoUrl) }
+                    Item(L.t("বাছাই করুন"), Icons.Filled.CheckCircle) { toggle(d.id) }
+                    Item(L.t("বিস্তারিত"), Icons.Filled.Info) { showInfo = true }
+                    Item(L.t("মুছুন"), Icons.Filled.Delete, tint = YtRed) { vm.deleteDownload(d) }
+                }
             }
-            if (done) {
-                IconButton(onClick = { vm.saveToGallery(d) }) { Icon(Icons.Filled.SaveAlt, null) }
-                IconButton(onClick = { vm.shareDownload(d) }) { Icon(Icons.Filled.Share, null) }
-            }
-            IconButton(onClick = { vm.deleteDownload(d) }) { Icon(Icons.Filled.Delete, null) }
         }
     }
+    if (showInfo) AlertDialog(
+        onDismissRequest = { showInfo = false },
+        title = { Text(d.title, maxLines = 3, overflow = TextOverflow.Ellipsis, fontSize = 16.sp) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(L.f("চ্যানেল: {0}", d.channel), fontSize = 13.sp)
+                Text(L.f("ধরন: {0}", kind), fontSize = 13.sp)
+                Text(L.f("অবস্থা: {0}", status), fontSize = 13.sp)
+                Text(L.f("ফাইলের অবস্থান: {0}", d.path), fontSize = 12.sp, color = Sub)
+            }
+        },
+        confirmButton = { TextButton(onClick = { showInfo = false }) { Text(L.t("বন্ধ করুন")) } }
+    )
 }
