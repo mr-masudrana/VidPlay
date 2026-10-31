@@ -59,7 +59,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = Prefs(app)
     val player = PlayerHolder.get(app)
     /** কন্ট্রোলারে পরের/আগের বাটন দেখাতে এটা PlayerView-তে দিতে হয় */
-    val controllerPlayer: Player get() = PlayerHolder.navPlayer(app)
+    val controllerPlayer: Player get() = PlayerHolder.navPlayer(ctx)
 
     // Room
     val subs = dao.subs().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
