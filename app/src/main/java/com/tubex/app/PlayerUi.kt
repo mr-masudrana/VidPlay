@@ -66,7 +66,8 @@ fun PlayerScreen(vm: MainViewModel) {
             else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
     }
 
-    BackHandler { if (landscape) toggleFullscreen() else vm.minimize() }
+    // পোর্ট্রেটে ব্যাক জেসচার YtApp-এর PredictiveBackScreen সামলায়; ফুলস্ক্রিনে (ল্যান্ডস্কেপ) এখানে
+    BackHandler(enabled = landscape) { toggleFullscreen() }
 
     val themeBg = Bg.toArgb()
     val themeLight = LocalPalette.current.light

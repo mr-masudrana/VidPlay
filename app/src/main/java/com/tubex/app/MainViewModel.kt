@@ -102,6 +102,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var feed by mutableStateOf<List<VideoItem>>(emptyList()); private set
     var subsFeed by mutableStateOf<List<VideoItem>>(emptyList()); private set
     var loading by mutableStateOf(false); private set
+    /** শুধু হোম ফিডের লোডিং (স্কেলিটন দেখানোর জন্য) */
+    var feedLoading by mutableStateOf(false); private set
+    /** পুল-টু-রিফ্রেশ চলছে (তালিকা না মুছে ওপরে স্পিনার দেখায়) */
+    var refreshing by mutableStateOf(false); private set
+    /** হোম ট্যাবে আবার ট্যাপ করলে বাড়ে: তালিকা স্মুথভাবে ওপরে ওঠে */
+    var homeTopTick by mutableStateOf(0); private set
+    fun scrollHomeToTop() { homeTopTick++ }
+    private var feedKind = 0            // 0 আপনার জন্য, 1 ক্যাটাগরি/ট্রেন্ডিং, 2 সার্চ
+    private var feedQuery: String? = null
+    /** ফিডটি সার্চ রেজাল্ট হলে true (তখন ক্যাটাগরির বদলে ফিল্টার দেখায়) */
+    var isSearchResult by mutableStateOf(false); private set
+    var fDate by mutableStateOf(0); private set
+    var fDuration by mutableStateOf(0); private set
+    var fSort by mutableStateOf(0); private set
+    private var feedJob: Job? = null
     var opening by mutableStateOf(false); private set
     /** নতুন ভিডিওর তথ্য আসার আগ পর্যন্ত true: প্লেয়ার পেজ স্কেলিটনসহ সাথে সাথে খোলে */
     var loadingNew by mutableStateOf(false); private set
@@ -286,36 +301,83 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun toast(s: String) = Toast.makeText(ctx, s, Toast.LENGTH_SHORT).show()
 
     // ---------- ফিড ----------
-    fun load(query: String?) = viewModelScope.launch {
-        loading = true; error = null
-        try {
-            feed = filterBlocked(if (query.isNullOrBlank()) YtRepository.trending() else YtRepository.search(query))
-        } catch (e: Exception) { error = e.message ?: L.t("লোড করা যায়নি") }
-        loading = false
+    fun load(query: String?, search: Boolean = false, silent: Boolean = false): Job {
+        feedJob?.cancel()
+        val job = viewModelScope.launch {
+            feedKind = if (search) 2 else 1; feedQuery = query
+            if (silent) refreshing = true else {
+                loading = true; feedLoading = true; error = null
+                isSearchResult = search
+                if (search) resetFilters()
+                feed = emptyList()
+            }
+            try {
+                val r = filterBlocked(if (query.isNullOrBlank()) YtRepository.trending() else YtRepository.search(query))
+                if (r.isNotEmpty() || !silent) feed = r
+                if (feed.isEmpty()) error = L.t("কোনো ভিডিও পাওয়া যায়নি") else error = null
+            } catch (e: CancellationException) { throw e
+            } catch (e: Exception) {
+                val msg = e.message ?: L.t("লোড করা যায়নি")
+                if (silent && feed.isNotEmpty()) toast(msg) else error = msg
+            }
+            loading = false; feedLoading = false; refreshing = false
+        }
+        feedJob = job
+        return job
     }
 
-    fun loadForYou() = viewModelScope.launch {
-        loading = true; error = null
-        try {
-            val interests = dao.interests()
-            val topics = Recommender.top(interests, 8).map { it.first }
-                .filter { it.startsWith("kw:") }.take(3).map { it.removePrefix("kw:") }
-            val pools = coroutineScope {
-                val jobs = listOf(async { runCatching { YtRepository.trending() }.getOrDefault(emptyList()) }) +
-                        topics.map { q -> async { runCatching { YtRepository.search(q) }.getOrDefault(emptyList()) } }
-                jobs.awaitAll()
+    fun loadForYou(silent: Boolean = false): Job {
+        feedJob?.cancel()
+        val job = viewModelScope.launch {
+            feedKind = 0; feedQuery = null
+            if (silent) refreshing = true else {
+                loading = true; feedLoading = true; error = null
+                isSearchResult = false; resetFilters()
+                feed = emptyList()
             }
-            val merged = pools.flatten().distinctBy { it.url }
-            feed = filterBlocked(
-                Recommender.rank(
-                    merged, interests, dao.watchedUrls().toSet(), history.value,
-                    subs.value.map { it.name.lowercase() }.toSet()
+            try {
+                val interests = dao.interests()
+                val topics = Recommender.top(interests, 8).map { it.first }
+                    .filter { it.startsWith("kw:") }.take(3).map { it.removePrefix("kw:") }
+                val pools = coroutineScope {
+                    val jobs = listOf(async { runCatching { YtRepository.trending() }.getOrDefault(emptyList()) }) +
+                            topics.map { q -> async { runCatching { YtRepository.search(q) }.getOrDefault(emptyList()) } }
+                    jobs.awaitAll()
+                }
+                val merged = pools.flatten().distinctBy { it.url }
+                val r = filterBlocked(
+                    Recommender.rank(
+                        merged, interests, dao.watchedUrls().toSet(), history.value,
+                        subs.value.map { it.name.lowercase() }.toSet()
+                    )
                 )
-            )
-            if (feed.isEmpty()) error = L.t("কোনো ভিডিও পাওয়া যায়নি")
-        } catch (e: Exception) { error = e.message ?: L.t("লোড করা যায়নি") }
-        loading = false
+                if (r.isNotEmpty() || !silent) feed = r
+                if (feed.isEmpty()) error = L.t("কোনো ভিডিও পাওয়া যায়নি") else error = null
+            } catch (e: CancellationException) { throw e
+            } catch (e: Exception) {
+                val msg = e.message ?: L.t("লোড করা যায়নি")
+                if (silent && feed.isNotEmpty()) toast(msg) else error = msg
+            }
+            loading = false; feedLoading = false; refreshing = false
+        }
+        feedJob = job
+        return job
     }
+
+    /** পুল-টু-রিফ্রেশ: বর্তমান ফিড (আপনার জন্য / ক্যাটাগরি / সার্চ) আবার লোড করে */
+    fun refreshFeed() {
+        when (feedKind) {
+            0 -> loadForYou(silent = true)
+            else -> load(feedQuery, search = feedKind == 2, silent = true)
+        }
+    }
+
+    // ---------- সার্চ ফিল্টার ----------
+    val filtersActive get() = fDate != 0 || fDuration != 0 || fSort != 0
+    fun setDateFilter(i: Int) { fDate = i }
+    fun setDurationFilter(i: Int) { fDuration = i }
+    fun setSortFilter(i: Int) { fSort = i }
+    fun resetFilters() { fDate = 0; fDuration = 0; fSort = 0 }
 
     fun loadSubsFeed(force: Boolean = false) = viewModelScope.launch {
         val list = subs.value.take(10)
@@ -663,7 +725,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             prefs.searchHistory = searchHistory
         }
         viewModelScope.launch { Recommender.boostQuery(dao, t, 0.8) }
-        load(t)
+        load(t, search = true)
     }
 
     fun removeHistory(q: String) {

@@ -1,5 +1,10 @@
 package com.tubex.app
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
@@ -11,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -19,6 +25,10 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -166,11 +176,15 @@ val LocalVm = staticCompositionLocalOf<MainViewModel?> { null }
 fun YtApp(vm: MainViewModel) = CompositionLocalProvider(LocalVm provides vm) {
     BoxWithConstraints(Modifier.fillMaxSize().background(Bg)) {
         MainScaffold(vm)
-        if (vm.channelOpen) ChannelScreen(vm)
+        if (vm.channelOpen) PredictiveBackScreen(onBack = { vm.closeChannel() }) { ChannelScreen(vm) }
         if (vm.active && !vm.expanded && vm.floatingMini) {
             FloatingPlayer(vm, constraints.maxWidth.toFloat(), constraints.maxHeight.toFloat())
         }
-        if (vm.expanded && (vm.active || vm.loadingNew)) PlayerScreen(vm)
+        if (vm.expanded && (vm.active || vm.loadingNew)) {
+            val landscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
+                android.content.res.Configuration.ORIENTATION_LANDSCAPE
+            PredictiveBackScreen(enabled = !landscape && !vm.inPip, onBack = { vm.minimize() }) { PlayerScreen(vm) }
+        }
         if (vm.opening) LinearProgressIndicator(
             Modifier.fillMaxWidth().statusBarsPadding(), color = YtRed, trackColor = Color.Transparent
         )
@@ -189,12 +203,39 @@ fun MainScaffold(vm: MainViewModel) {
         Triple(L.t("সেটিংস"), Icons.Outlined.Settings, L.t("সেটিংস"))
     )
     LaunchedEffect(vm.searching) { if (vm.searching) runCatching { focus.requestFocus() } }
-    BackHandler(enabled = vm.searching && vm.tab == 0) { vm.closeSearch() }
+
+    // হোমে নিচে স্ক্রোল করলে টপ ও বটম বার লুকায়, ওপরে স্ক্রোল করলে আবার দেখায়
+    var barsShown by remember { mutableStateOf(true) }
+    LaunchedEffect(vm.tab, vm.searching, vm.showSuggestions, vm.homeTopTick, vm.feedLoading) { barsShown = true }
+    val scrollConn = remember {
+        object : NestedScrollConnection {
+            var acc = 0f
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                val dy = available.y
+                if (dy == 0f) return Offset.Zero
+                if ((dy < 0f) != (acc < 0f)) acc = 0f      // দিক বদলালে হিসাব নতুন করে
+                acc += dy
+                if (acc < -90f) { barsShown = false; acc = 0f }
+                else if (acc > 40f) { barsShown = true; acc = 0f }
+                return Offset.Zero
+            }
+        }
+    }
+    val barsVisible = barsShown || vm.tab != 0 || (vm.searching && vm.showSuggestions)
+    // সার্চ বন্ধ করা, অথবা অন্য ট্যাব (সাবস্ক্রিপশন/লাইব্রেরি/সেটিংস) থেকে হোমে ফেরা: প্রেডিক্টিভ ব্যাকসহ।
+    // হোম থেকে ব্যাক করলে অ্যাপ বন্ধ (সিস্টেমের ব্যাক-টু-হোম অ্যানিমেশনসহ)
+    val backAnim = rememberPredictiveBack(enabled = vm.tab != 0 || vm.searching) {
+        if (vm.tab != 0) vm.tab = 0 else vm.closeSearch()
+    }
 
     Scaffold(
         containerColor = Bg,
         topBar = {
-            TopAppBar(
+            AnimatedVisibility(
+                visible = barsVisible,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) { TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg),
                 title = {
                     if (vm.searching && vm.tab == 0) {
@@ -227,24 +268,31 @@ fun MainScaffold(vm: MainViewModel) {
                         else IconButton(onClick = { vm.openSearch() }) { Icon(Icons.Filled.Search, null) }
                     }
                 }
-            )
+            ) }
         },
         bottomBar = {
             Column {
                 if (vm.active && !vm.expanded && !vm.floatingMini) MiniPlayer(vm)
-                NavigationBar(containerColor = Bg) {
+                AnimatedVisibility(
+                    visible = barsVisible,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut()
+                ) { NavigationBar(containerColor = Bg) {
                     tabs.forEachIndexed { i, (label, icon, _) ->
                         NavigationBarItem(
-                            selected = vm.tab == i, onClick = { vm.tab = i },
+                            selected = vm.tab == i,
+                            onClick = {
+                                if (i == 0 && vm.tab == 0) vm.scrollHomeToTop() else vm.tab = i
+                            },
                             icon = { Icon(icon, label) }, label = { Text(label, fontSize = 10.sp) },
                             colors = NavigationBarItemDefaults.colors(indicatorColor = Chip)
                         )
                     }
-                }
+                } }
             }
         }
     ) { pad ->
-        Box(Modifier.padding(pad).fillMaxSize()) {
+        Box(Modifier.padding(pad).fillMaxSize().nestedScroll(scrollConn).predictiveBackLayer(backAnim)) {
             when (vm.tab) {
                 0 -> if (vm.searching && vm.showSuggestions) SearchPanel(vm) else HomeTab(vm)
                 1 -> SubsTab(vm)
@@ -282,53 +330,141 @@ fun SearchPanel(vm: MainViewModel) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeTab(vm: MainViewModel) {
-    var chip by remember { mutableStateOf(0) }
+    var chip by remember(vm.searching) { mutableStateOf(0) }
+    var showFilter by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    var seenTick by remember { mutableStateOf(vm.homeTopTick) }
+    LaunchedEffect(vm.homeTopTick) {
+        if (vm.homeTopTick != seenTick) {
+            seenTick = vm.homeTopTick
+            // অনেক নিচে থাকলে আগে কাছাকাছি লাফ দিয়ে তারপর স্মুথ স্ক্রোল
+            if (listState.firstVisibleItemIndex > 6) listState.scrollToItem(6)
+            listState.animateScrollToItem(0)
+        }
+    }
     val chips = listOf(L.t("আপনার জন্য"), L.t("গান"), L.t("গেমিং"), L.t("খবর"), L.t("লাইভ"), L.t("রান্না"), L.t("ক্রিকেট"))
-    val hist by vm.history.collectAsState()
-    val cont = hist.filter { it.durationSec > 0 && it.positionMs > 5_000 && it.positionMs < it.durationSec * 950 }.take(8)
     val on = MaterialTheme.colorScheme.onBackground
+    val shown = remember(vm.feed, vm.isSearchResult, vm.fDate, vm.fDuration, vm.fSort) {
+        if (vm.isSearchResult) SearchFilter.apply(vm.feed, vm.fDate, vm.fDuration, vm.fSort) else vm.feed
+    }
 
     Column {
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.padding(vertical = 8.dp)
-        ) {
-            items(chips.size) { i ->
-                val sel = i == chip
-                Text(
-                    chips[i], color = if (sel) Bg else on,
-                    fontSize = 14.sp, fontWeight = FontWeight.Medium,
-                    modifier = Modifier.clip(RoundedCornerShape(8.dp))
-                        .background(if (sel) on else Chip)
-                        .clickable { chip = i; if (i == 0) vm.loadForYou() else vm.load(chips[i]) }
-                        .padding(horizontal = 12.dp, vertical = 7.dp)
-                )
-            }
-        }
-        if (vm.loading && vm.feed.isEmpty()) VideoListSkeleton(3)
-        vm.error?.let { Text(it, color = Sub, modifier = Modifier.padding(16.dp)) }
-        LazyColumn {
-            if (cont.isNotEmpty()) item {
-                Text(L.t("দেখা চালিয়ে যান"), fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(12.dp, 4.dp))
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.padding(bottom = 12.dp)
-                ) {
-                    items(cont) { h ->
-                        Column(Modifier.width(160.dp).clickable { vm.play(h.url) }) {
-                            HistoryThumb(h, Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)))
-                            Text(h.title, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(top = 4.dp))
-                        }
+        if (vm.isSearchResult) {
+            // সার্চ রেজাল্টে ক্যাটাগরি নয়, ফিল্টার
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(vertical = 8.dp)
+            ) {
+                item {
+                    Row(
+                        Modifier.clip(RoundedCornerShape(8.dp))
+                            .background(if (vm.filtersActive) on else Chip)
+                            .clickable { showFilter = true }
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Outlined.FilterList, null, Modifier.size(18.dp),
+                            tint = if (vm.filtersActive) Bg else on)
+                        Spacer(Modifier.width(6.dp))
+                        Text(L.t("ফিল্টার"), fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                            color = if (vm.filtersActive) Bg else on)
                     }
                 }
+                if (vm.fDate != 0) item {
+                    ActiveFilterChip(L.t(SearchFilter.dates[vm.fDate])) { vm.setDateFilter(0) }
+                }
+                if (vm.fDuration != 0) item {
+                    ActiveFilterChip(L.t(SearchFilter.durations[vm.fDuration])) { vm.setDurationFilter(0) }
+                }
+                if (vm.fSort != 0) item {
+                    ActiveFilterChip(L.t(SearchFilter.sorts[vm.fSort])) { vm.setSortFilter(0) }
+                }
             }
-            items(vm.feed) { v -> VideoCard(v, onChannel = { vm.openChannel(v.channelUrl) }) { vm.play(v.url) } }
+        } else {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(vertical = 8.dp)
+            ) {
+                items(chips.size) { i ->
+                    val sel = i == chip
+                    Text(
+                        chips[i], color = if (sel) Bg else on,
+                        fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                        modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                            .background(if (sel) on else Chip)
+                            .clickable { chip = i; if (i == 0) vm.loadForYou() else vm.load(chips[i]) }
+                            .padding(horizontal = 12.dp, vertical = 7.dp)
+                    )
+                }
+            }
         }
+        PullToRefreshBox(
+            isRefreshing = vm.refreshing,
+            onRefresh = { vm.refreshFeed() },
+            modifier = Modifier.weight(1f).fillMaxWidth()
+        ) {
+            LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                if (vm.feedLoading) {
+                    // সার্চ/ক্যাটাগরি বদলালে স্কেলিটন লোডিং
+                    item { VideoListSkeleton(3) }
+                } else {
+                    vm.error?.let { e -> item { Text(e, color = Sub, modifier = Modifier.padding(16.dp)) } }
+                    if (shown.isEmpty() && vm.feed.isNotEmpty()) item {
+                        Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(L.t("ফিল্টারে কোনো ভিডিও মেলেনি"), color = Sub)
+                            TextButton(onClick = { vm.resetFilters() }) { Text(L.t("ফিল্টার মুছুন")) }
+                        }
+                    }
+                    items(shown) { v -> VideoCard(v, onChannel = { vm.openChannel(v.channelUrl) }) { vm.play(v.url) } }
+                }
+            }
+        }
+    }
+
+    if (showFilter) ModalBottomSheet(onDismissRequest = { showFilter = false }, containerColor = Chip) {
+        Column(
+            Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp).navigationBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(L.t("ফিল্টার"), fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.weight(1f))
+                if (vm.filtersActive) TextButton(onClick = { vm.resetFilters() }) { Text(L.t("ফিল্টার মুছুন")) }
+            }
+            FilterGroup(L.t("আপলোডের সময়"), SearchFilter.dates, vm.fDate) { vm.setDateFilter(it) }
+            FilterGroup(L.t("দৈর্ঘ্য"), SearchFilter.durations, vm.fDuration) { vm.setDurationFilter(it) }
+            FilterGroup(L.t("সাজান"), SearchFilter.sorts, vm.fSort) { vm.setSortFilter(it) }
+            Text(L.f("{0} টি ফলাফল", shown.size), color = Sub, fontSize = 12.sp)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FilterGroup(title: String, options: List<String>, selected: Int, onPick: (Int) -> Unit) {
+    Text(title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(options.size) { i ->
+            FilterChip(selected = selected == i, onClick = { onPick(i) }, label = { Text(L.t(options[i])) })
+        }
+    }
+}
+
+@Composable
+private fun ActiveFilterChip(label: String, onClear: () -> Unit) {
+    Row(
+        Modifier.clip(RoundedCornerShape(8.dp)).background(Chip).clickable(onClick = onClear)
+            .padding(start = 12.dp, end = 8.dp, top = 7.dp, bottom = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.width(4.dp))
+        Icon(Icons.Filled.Close, null, Modifier.size(16.dp))
     }
 }
 

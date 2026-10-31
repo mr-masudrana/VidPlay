@@ -23,7 +23,6 @@ import coil.compose.AsyncImage
 
 @Composable
 fun ChannelScreen(vm: MainViewModel) {
-    BackHandler { vm.closeChannel() }
     val subs by vm.subs.collectAsState()
     val ch = vm.channel
 

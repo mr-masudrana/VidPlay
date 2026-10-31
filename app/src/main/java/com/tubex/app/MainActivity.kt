@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,6 +28,13 @@ class MainActivity : ComponentActivity() {
     private var controller: MediaController? = null
     private var controllerFuture: com.google.common.util.concurrent.ListenableFuture<MediaController>? = null
 
+    private val notifPermLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    private val storagePermLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            vm.onStoragePermissionResult(granted)
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
@@ -34,10 +42,10 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 33 && savedInstanceState == null &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
         ) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+            notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         vm.requestStoragePermission = {
-            requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), 2)
+            storagePermLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
         // ব্যাকগ্রাউন্ড সার্ভিস চালু/বাইন্ড করার জন্য
         val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
@@ -55,11 +63,6 @@ class MainActivity : ComponentActivity() {
             }
         }
         if (savedInstanceState == null) handleIntent(intent)
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 2) vm.onStoragePermissionResult(grantResults.firstOrNull() == android.content.pm.PackageManager.PERMISSION_GRANTED)
     }
 
     override fun onNewIntent(intent: Intent) {
