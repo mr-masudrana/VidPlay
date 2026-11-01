@@ -203,7 +203,15 @@ fun YtApp(vm: MainViewModel) = CompositionLocalProvider(LocalVm provides vm) {
             enter = slideInHorizontally(tween(280)) { it / 3 } + fadeIn(tween(280)),
             exit = fadeOut(tween(240))
         ) {
-            PredictiveBackScreen(enabled = vm.channelOpen, onBack = { vm.closeChannel() }) { ChannelScreen(vm) }
+            PredictiveBackScreen(enabled = vm.channelOpen, onBack = { if (vm.channelAboutOpen) vm.closeChannelAbout() else vm.closeChannel() }) { ChannelScreen(vm) }
+        }
+        // ইউটিউব প্লেলিস্ট পেজ (চ্যানেলের ওপরে)
+        AnimatedVisibility(
+            visible = vm.ytPlOpen, modifier = Modifier.fillMaxSize(),
+            enter = slideInHorizontally(tween(280)) { it / 3 } + fadeIn(tween(280)),
+            exit = fadeOut(tween(240))
+        ) {
+            PredictiveBackScreen(enabled = vm.ytPlOpen, onBack = { vm.closeYtPlaylist() }) { YtPlaylistScreen(vm) }
         }
         val landscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
             android.content.res.Configuration.ORIENTATION_LANDSCAPE
@@ -282,15 +290,16 @@ fun MainScaffold(vm: MainViewModel) {
         }
     }
     val backIdle = backAnim.progress == 0f
+    val backActive by remember { derivedStateOf { backAnim.progress > 0f } }   // জেসচার চলছে কি না (প্রতি ফ্রেমে রিকম্পোজ এড়াতে)
     LaunchedEffect(backIdle) { if (backIdle) skipTabAnim = false }
 
     val bottomDp = with(density) { bars.bottomPx.toDp() }
 
     Box(Modifier.fillMaxSize().background(Bg)) {
         // ব্যাক জেসচার চলার সময় নিচে আগের (হোম) পেজের প্রিভিউ; ওপরের পেজ মিলিয়ে গেলে এটি ফুটে ওঠে
-        if (backAnim.progress > 0f) {
+        if (backActive) {
             // জেসচার শুরুর মুহূর্তে ঠিক হয়: সেটিংস টপিক পেজ থেকে ব্যাকে নিচে টপিকের তালিকা, নাহলে হোম
-            val kind = remember(backAnim.progress > 0f) {
+            val kind = remember(backActive) {
                 when {
                     vm.tab == 3 && vm.settingsPage != null -> 1
                     vm.tab == 2 && vm.libraryPage != null -> 2
@@ -298,7 +307,7 @@ fun MainScaffold(vm: MainViewModel) {
                 }
             }
             when (kind) {
-                1 -> SettingsListPreview(statusDp, bottomDp)
+                1 -> SettingsListPreview(vm, statusDp, bottomDp)
                 2 -> LibraryOverviewPreview(vm, statusDp, bottomDp)
                 else -> HomePreview(vm, statusDp, bottomDp)
             }
@@ -355,7 +364,8 @@ fun MainScaffold(vm: MainViewModel) {
             Column(Modifier.graphicsLayer { translationY = bars.fraction * bars.navPx }) {
                 if (vm.active && !vm.expanded && !vm.floatingMini) MiniPlayer(vm)
                 // সেটিংস টপিক পেজ বা লাইব্রেরির "সব দেখুন" পেজে নিচের নেভ বার লুকানো থাকে
-                val navVisible = !((vm.tab == 3 && vm.settingsPage != null) || (vm.tab == 2 && vm.libraryPage != null))
+                val navVisible = backActive ||
+                    !((vm.tab == 3 && vm.settingsPage != null) || (vm.tab == 2 && vm.libraryPage != null))
                 AnimatedVisibility(
                     visible = navVisible,
                     enter = expandVertically(tween(220)) + fadeIn(tween(220)),
@@ -435,7 +445,7 @@ fun HomeScreen(vm: MainViewModel, bars: BarsState, bottomPad: Dp) {
     val headerPx = with(density) { headerDp.toPx() }
     SideEffect { bars.headerPx = if (panel) 0f else headerPx }
 
-    LaunchedEffect(vm.searching) { if (vm.searching) runCatching { focus.requestFocus() } }
+    LaunchedEffect(vm.searching) { if (vm.searching && vm.query.isEmpty()) runCatching { focus.requestFocus() } }
 
     // হোম ট্যাবে আবার ট্যাপ করলে স্মুথভাবে ওপরে
     var seenTick by remember { mutableStateOf(vm.homeTopTick) }
@@ -616,7 +626,21 @@ private fun HomeFeed(vm: MainViewModel, shown: List<VideoItem>, listState: LazyL
                         TextButton(onClick = { vm.resetFilters() }) { Text(L.t("ফিল্টার মুছুন")) }
                     }
                 }
-                items(shown) { v -> VideoCard(v, onChannel = { vm.openChannel(v.channelUrl) }) { vm.play(v.url) } }
+                // সার্চ রেজাল্টে প্রথম ৩টি ভিডিওর পর প্লেলিস্ট সেকশন (ফিল্টার চালু থাকলে লুকানো)
+                val pls = if (vm.isSearchResult && !vm.filtersActive) vm.searchPlaylists.take(4) else emptyList()
+                val head = if (pls.isEmpty()) 0 else minOf(3, shown.size)
+                items(shown.take(head)) { v -> VideoCard(v, onChannel = { vm.openChannel(v.channelUrl) }) { vm.play(v.url) } }
+                if (pls.isNotEmpty()) {
+                    item {
+                        Text(
+                            L.t("প্লেলিস্ট"), fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(16.dp, 4.dp, 16.dp, 4.dp)
+                        )
+                    }
+                    items(pls) { p -> PlaylistResultRow(p) { vm.openYtPlaylist(p.url) } }
+                    item { Spacer(Modifier.height(12.dp)) }
+                }
+                items(shown.drop(head)) { v -> VideoCard(v, onChannel = { vm.openChannel(v.channelUrl) }) { vm.play(v.url) } }
             }
         }
     }
@@ -636,9 +660,9 @@ private fun LibraryOverviewPreview(vm: MainViewModel, statusDp: Dp, bottomDp: Dp
 
 /** সেটিংস টপিক পেজ থেকে ব্যাকে নিচে দেখানো টপিক তালিকার স্থির প্রিভিউ */
 @Composable
-private fun SettingsListPreview(statusDp: Dp, bottomDp: Dp) {
+private fun SettingsListPreview(vm: MainViewModel, statusDp: Dp, bottomDp: Dp) {
     Box(Modifier.fillMaxSize().background(Bg).padding(top = statusDp + TopBarH, bottom = bottomDp)) {
-        SettingsTopicList { }
+        SettingsTopicList(vm.settingsListScroll) { }
     }
     Box(
         Modifier.fillMaxWidth().padding(top = statusDp).height(TopBarH).background(Bg),

@@ -17,12 +17,16 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.schabi.newpipe.extractor.MediaFormat
+import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.Page
 import org.schabi.newpipe.extractor.comments.CommentsInfoItem
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.channel.ChannelInfo
 import org.schabi.newpipe.extractor.channel.tabs.ChannelTabInfo
 import org.schabi.newpipe.extractor.channel.tabs.ChannelTabs
+import org.schabi.newpipe.extractor.linkhandler.ListLinkHandler
+import org.schabi.newpipe.extractor.playlist.PlaylistInfo
+import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem
 import org.schabi.newpipe.extractor.comments.CommentsInfo
 import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.stream.StreamInfo
@@ -43,7 +47,25 @@ data class VideoItem(
 
 data class ChannelData(
     val url: String, val name: String, val avatar: String?, val banner: String?,
-    val subscribers: Long, val description: String?, val videos: List<VideoItem>
+    val subscribers: Long, val description: String?, val videos: List<VideoItem>,
+    val playlistsTab: ListLinkHandler? = null,
+    val videosTab: ListLinkHandler? = null,
+    val videosNext: Page? = null,
+    val handle: String? = null
+)
+
+/** চ্যানেল পেজের পাওয়া গেলে-দেখানো বাড়তি তথ্য (ইউজারনেম, ভিডিও সংখ্যা) */
+data class ChannelExtra(val handle: String?, val videoCount: String?)
+
+data class MoreVideos(val items: List<VideoItem>, val next: Page?)
+
+/** সার্চ/চ্যানেলের প্লেলিস্ট কার্ড */
+data class PlaylistCard(val url: String, val name: String, val uploader: String, val thumb: String?, val count: Long)
+
+/** ইউটিউব প্লেলিস্ট: নাম + সব ভিডিও */
+data class PlaylistData(
+    val url: String, val name: String, val uploader: String, val thumb: String?,
+    val count: Long, val videos: List<VideoItem>
 )
 
 data class CommentItem(
@@ -51,7 +73,12 @@ data class CommentItem(
     val date: String, val avatar: String?, val replyCount: Int, val replies: Page?, val time: Long?
 )
 
-data class CommentPage(val items: List<CommentItem>, val next: Page?)
+data class CommentPage(val items: List<CommentItem>, val next: Page?, val total: Int = -1)
+
+private fun PlaylistInfoItem.toCard() = PlaylistCard(
+    url = url, name = name, uploader = uploaderName ?: "",
+    thumb = thumbnails.lastOrNull()?.url, count = streamCount
+)
 
 private fun StreamInfoItem.toVideo() = VideoItem(
     title = name, url = url, channel = uploaderName ?: "", channelUrl = uploaderUrl,
@@ -78,6 +105,38 @@ object YtRepository {
         SearchInfo.getInfo(yt, handler).relatedItems.filterIsInstance<StreamInfoItem>().map { it.toVideo() }
     }
 
+    /** সার্চের ফলাফলে দেখানোর জন্য প্লেলিস্ট */
+    suspend fun searchPlaylists(query: String): List<PlaylistCard> = withContext(Dispatchers.IO) {
+        val handler = yt.searchQHFactory.fromQuery(query, listOf("playlists"), "")
+        SearchInfo.getInfo(yt, handler).relatedItems.filterIsInstance<PlaylistInfoItem>().map { it.toCard() }
+    }
+
+    /** ইউটিউব প্লেলিস্টের সব ভিডিও (পেজ করে, সর্বোচ্চ প্রায় ১০০০টি) */
+    suspend fun playlist(url: String): PlaylistData = withContext(Dispatchers.IO) {
+        val info = PlaylistInfo.getInfo(yt, url)
+        val all = ArrayList<StreamInfoItem>(info.relatedItems)
+        var page = info.nextPage
+        var n = 0
+        while (page != null && n < 9) {
+            val more = runCatching { PlaylistInfo.getMoreItems(yt, url, page!!) }.getOrNull() ?: break
+            all += more.items
+            page = more.nextPage
+            n++
+        }
+        PlaylistData(
+            url = info.url, name = info.name ?: "", uploader = info.uploaderName ?: "",
+            thumb = info.thumbnails.lastOrNull()?.url, count = info.streamCount,
+            videos = all.map { v ->
+                v.toVideo().let { x -> if (x.channel.isBlank()) x.copy(channel = info.uploaderName ?: "") else x }
+            }.distinctBy { it.url }
+        )
+    }
+
+    /** চ্যানেলের "প্লেলিস্ট" ট্যাব */
+    suspend fun channelPlaylists(tab: ListLinkHandler): List<PlaylistCard> = withContext(Dispatchers.IO) {
+        ChannelTabInfo.getInfo(yt, tab).relatedItems.filterIsInstance<PlaylistInfoItem>().map { it.toCard() }
+    }
+
     suspend fun streamInfo(url: String): StreamInfo = withContext(Dispatchers.IO) { StreamInfo.getInfo(yt, url) }
 
     fun related(info: StreamInfo): List<VideoItem> =
@@ -87,28 +146,82 @@ object YtRepository {
     suspend fun channel(url: String): ChannelData = withContext(Dispatchers.IO) {
         val info = ChannelInfo.getInfo(yt, url)
         val tab = info.tabs.firstOrNull { it.contentFilters.contains(ChannelTabs.VIDEOS) }
-        val videos = tab?.let {
-            ChannelTabInfo.getInfo(yt, it).relatedItems.filterIsInstance<StreamInfoItem>().map { v ->
-                v.toVideo().let { x ->
-                    x.copy(
-                        channelAvatar = x.channelAvatar ?: info.avatars.lastOrNull()?.url,
-                        channelUrl = x.channelUrl ?: info.url,
-                        channel = x.channel.ifBlank { info.name }
-                    )
-                }
+        val tabInfo = tab?.let { ChannelTabInfo.getInfo(yt, it) }
+        val videos = tabInfo?.relatedItems?.filterIsInstance<StreamInfoItem>()?.map { v ->
+            v.toVideo().let { x ->
+                x.copy(
+                    channelAvatar = x.channelAvatar ?: info.avatars.lastOrNull()?.url,
+                    channelUrl = x.channelUrl ?: info.url,
+                    channel = x.channel.ifBlank { info.name }
+                )
             }
         } ?: emptyList()
         ChannelData(
             url = info.url, name = info.name,
             avatar = info.avatars.lastOrNull()?.url, banner = info.banners.lastOrNull()?.url,
-            subscribers = info.subscriberCount, description = info.description, videos = videos
+            subscribers = info.subscriberCount, description = info.description, videos = videos,
+            playlistsTab = info.tabs.firstOrNull { it.contentFilters.contains(ChannelTabs.PLAYLISTS) },
+            videosTab = tab, videosNext = tabInfo?.nextPage, handle = handleOf(info)
         )
+    }
+
+    /** ভিডিও ট্যাবের পরের পেজ */
+    suspend fun moreChannelVideos(tab: ListLinkHandler, page: Page, ch: ChannelData): MoreVideos =
+        withContext(Dispatchers.IO) {
+            val p = ChannelTabInfo.getMoreItems(yt, tab, page)
+            MoreVideos(
+                p.items.filterIsInstance<StreamInfoItem>().map { v ->
+                    v.toVideo().let { x ->
+                        x.copy(
+                            channelAvatar = x.channelAvatar ?: ch.avatar,
+                            channelUrl = x.channelUrl ?: ch.url,
+                            channel = x.channel.ifBlank { ch.name }
+                        )
+                    }
+                },
+                p.nextPage
+            )
+        }
+
+    /** লিংকে @ইউজারনেম থাকলে সেটা; নাহলে এক্সট্র্যাক্টর দিলে (রিফ্লেকশনে, ভার্সনভেদে না-ও থাকতে পারে) */
+    private fun handleOf(info: ChannelInfo): String? {
+        Regex("/(@[^/?#]+)").find(info.originalUrl ?: "")?.groupValues?.get(1)?.let {
+            return runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrDefault(it)
+        }
+        for (m in listOf("getChannelHandle", "getHandle")) {
+            val v = runCatching { info.javaClass.getMethod(m).invoke(info) as? String }.getOrNull()
+            if (!v.isNullOrBlank()) return if (v.startsWith("@")) v else "@$v"
+        }
+        return null
+    }
+
+    /**
+     * চ্যানেল পেজ থেকে সর্বোচ্চ চেষ্টায় ইউজারনেম ও ভিডিও সংখ্যা বের করে (YouTube পেজের গঠন বদলালে খালি আসবে)।
+     * ব্যাকগ্রাউন্ডে চলে, চ্যানেল পেজ আটকায় না।
+     */
+    suspend fun channelExtra(channelUrl: String): ChannelExtra = withContext(Dispatchers.IO) {
+        runCatching {
+            val u = channelUrl.substringBefore('?').trimEnd('/') + "?hl=en"
+            val html = NewPipe.getDownloader().get(
+                u, mapOf(
+                    "Cookie" to listOf("CONSENT=YES+1; SOCS=CAI"),
+                    "Accept-Language" to listOf("en-US,en;q=0.9")
+                )
+            ).responseBody() ?: ""
+            val handle = Regex(""""(?:vanityChannelUrl|canonicalBaseUrl)":"[^"]*?/(@[^"/\\]+)"""").find(html)
+                ?.groupValues?.get(1)?.let { runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrDefault(it) }
+            val count = Regex(""""content":"([\d.,]+[KMB]?) videos"""").find(html)?.groupValues?.get(1)
+                ?: Regex(""""videosCountText":\{"runs":\[\{"text":"([\d.,]+[KMB]?)"""").find(html)?.groupValues?.get(1)
+            ChannelExtra(handle, count)
+        }.getOrDefault(ChannelExtra(null, null))
     }
 
     // ---------- মন্তব্য (পেজ করে) ----------
     suspend fun comments(url: String): CommentPage = withContext(Dispatchers.IO) {
         val ci = CommentsInfo.getInfo(yt, url)
-        CommentPage(ci.relatedItems.map { it.toComment() }, ci.nextPage)
+        // মোট মন্তব্যের সংখ্যা (এক্সট্র্যাক্টরের ভার্সনে না থাকলে -১)
+        val total = runCatching { ci.javaClass.getMethod("getCommentCount").invoke(ci) as? Int }.getOrNull() ?: -1
+        CommentPage(ci.relatedItems.map { it.toComment() }, ci.nextPage, total)
     }
 
     /** পরের পেজ অথবা কোনো মন্তব্যের উত্তরের পেজ */

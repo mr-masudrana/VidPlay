@@ -50,7 +50,10 @@ import java.util.Locale
 
 /** শিরোনামের নিচে এক লাইনে: ভিউ • লাইক • ডিসলাইক • প্রকাশের সময় (জায়গা না হলে আড়াআড়ি স্ক্রোল) */
 @Composable
-fun StatsLine(info: StreamInfo, likes: Long?, dislikes: Long?, modifier: Modifier = Modifier) {
+fun StatsLine(
+    info: StreamInfo, likes: Long?, dislikes: Long?, modifier: Modifier = Modifier,
+    trailing: (@Composable () -> Unit)? = null      // সময়ের পর একই লাইনে (যেমন "...আরও দেখুন")
+) {
     val views = fmtCount(info.viewCount).takeIf { it.isNotBlank() }?.let { L.f("{0} ভিউ", it) }
     val whenText = info.uploadDate?.offsetDateTime()?.toInstant()?.toEpochMilli()?.let { relativeTime(it) }
         ?: info.textualUploadDate?.takeIf { it.isNotBlank() }
@@ -76,6 +79,7 @@ fun StatsLine(info: StreamInfo, likes: Long?, dislikes: Long?, modifier: Modifie
             if (i > 0) StatText("  •  ")
             p()
         }
+        if (trailing != null) { Spacer(Modifier.width(8.dp)); trailing() }
     }
 }
 
@@ -97,11 +101,13 @@ fun DescriptionSheet(vm: MainViewModel, info: StreamInfo, onDismiss: () -> Unit)
         }
     }
 
+    val maxH = rememberSheetMaxHeight()
     ModalBottomSheet(
         onDismissRequest = onDismiss, containerColor = Chip,
-        sheetState = rememberModalBottomSheetState()
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        scrimColor = androidx.compose.ui.graphics.Color.Transparent     // প্লেয়ার পরিষ্কার দেখা যায়
     ) {
-        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 520.dp)) {
+        LazyColumn(Modifier.fillMaxWidth().heightIn(max = maxH)) {
             item {
                 Column(Modifier.padding(horizontal = 16.dp)) {
                     Text(L.t("বিবরণ"), fontWeight = FontWeight.Bold, fontSize = 16.sp)
@@ -157,7 +163,9 @@ fun DescriptionSheet(vm: MainViewModel, info: StreamInfo, onDismiss: () -> Unit)
                     else SelectableLinkText(
                         text,
                         onUrl = { u -> runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u))) } },
-                        onSeek = { sec -> vm.player.seekTo(sec * 1000L); onDismiss() }
+                        onSeek = { sec -> vm.player.seekTo(sec * 1000L); onDismiss() },
+                        onTag = { t -> onDismiss(); vm.openHashtag(t) },
+                        onMention = { h -> onDismiss(); vm.openMention(h) }
                     )
                 }
             }
@@ -176,34 +184,64 @@ private fun Stat(value: String, label: String) {
 @Composable
 private fun linkColor(): Color = if (LocalPalette.current.light) Color(0xFF065FD4) else Color(0xFF3EA6FF)
 
-private val linkRegex = Regex("""(https?://[^\s<>"]+)|(?<![\d:])((?:\d{1,2}:)?\d{1,2}:\d{2})(?![\d:])""")
+private val linkRegex = Regex(
+    """(https?://[^\s<>"]+)|(?<![\d:])((?:\d{1,2}:)?\d{1,2}:\d{2})(?![\d:])""" +
+        """|((?<![\p{L}\p{M}\p{N}_&/])#(?=[\p{N}_]*[\p{L}\p{M}])[\p{L}\p{M}\p{N}_]+)""" +
+        """|((?<![\p{L}\p{M}\p{N}_.@/])@[\p{L}\p{M}\p{N}_.\-]{2,40})"""
+)
 
-/** URL ও টাইমস্ট্যাম্প (১:২৩, ০১:২৩:৪৫) ট্যাপযোগ্য লেখা */
+/** URL, টাইমস্ট্যাম্প (১:২৩), #হ্যাশট্যাগ ও @মেনশন ট্যাপযোগ্য লেখা */
 @Composable
-fun SelectableLinkText(text: String, onUrl: (String) -> Unit, onSeek: (Long) -> Unit) {
+fun SelectableLinkText(
+    text: String, onUrl: (String) -> Unit, onSeek: (Long) -> Unit,
+    onTag: (String) -> Unit = {}, onMention: ((String) -> Unit)? = null,
+    timestamps: Boolean = true
+) {
     val color = linkColor()
-    val annotated: AnnotatedString = remember(text, color) {
+    val annotated: AnnotatedString = remember(text, color, timestamps, onMention != null) {
         buildAnnotatedString {
             var last = 0
             for (m in linkRegex.findAll(text)) {
-                var start = m.range.first
+                val start = m.range.first
                 var end = m.range.last + 1
-                if (m.groups[1] != null) {
-                    var u = m.value
-                    while (u.isNotEmpty() && u.last() in ".,;:!?)]}\u2019\u201D") { u = u.dropLast(1); end-- }
-                    append(text.substring(last, start))
-                    pushStringAnnotation("URL", u)
-                    pushStyle(SpanStyle(color = color, textDecoration = TextDecoration.Underline))
-                    append(u)
-                    pop(); pop()
-                } else {
-                    val parts = m.value.split(":").map { it.toLong() }
-                    val sec = parts.fold(0L) { acc, p -> acc * 60 + p }
-                    append(text.substring(last, start))
-                    pushStringAnnotation("TS", sec.toString())
-                    pushStyle(SpanStyle(color = color))
-                    append(m.value)
-                    pop(); pop()
+                when {
+                    m.groups[1] != null -> {
+                        var u = m.value
+                        while (u.isNotEmpty() && u.last() in ".,;:!?)]}\u2019\u201D") { u = u.dropLast(1); end-- }
+                        append(text.substring(last, start))
+                        pushStringAnnotation("URL", u)
+                        pushStyle(SpanStyle(color = color, textDecoration = TextDecoration.Underline))
+                        append(u)
+                        pop(); pop()
+                    }
+                    m.groups[2] != null -> {
+                        if (!timestamps) continue
+                        val parts = m.value.split(":").map { it.toLong() }
+                        val sec = parts.fold(0L) { acc, p -> acc * 60 + p }
+                        append(text.substring(last, start))
+                        pushStringAnnotation("TS", sec.toString())
+                        pushStyle(SpanStyle(color = color))
+                        append(m.value)
+                        pop(); pop()
+                    }
+                    m.groups[3] != null -> {
+                        append(text.substring(last, start))
+                        pushStringAnnotation("TAG", m.value)
+                        pushStyle(SpanStyle(color = color))
+                        append(m.value)
+                        pop(); pop()
+                    }
+                    else -> {
+                        if (onMention == null) continue
+                        val v = m.value.trimEnd('.', '-')
+                        if (v.length < 3) continue
+                        end = start + v.length
+                        append(text.substring(last, start))
+                        pushStringAnnotation("AT", v)
+                        pushStyle(SpanStyle(color = color))
+                        append(v)
+                        pop(); pop()
+                    }
                 }
                 last = end
             }
@@ -216,7 +254,9 @@ fun SelectableLinkText(text: String, onUrl: (String) -> Unit, onSeek: (Long) -> 
         style = TextStyle(color = MaterialTheme.colorScheme.onBackground, fontSize = 14.sp, lineHeight = 21.sp),
         onClick = { off ->
             annotated.getStringAnnotations("URL", off, off).firstOrNull()?.let { onUrl(it.item); return@ClickableText }
-            annotated.getStringAnnotations("TS", off, off).firstOrNull()?.let { onSeek(it.item.toLong()) }
+            annotated.getStringAnnotations("TS", off, off).firstOrNull()?.let { onSeek(it.item.toLong()); return@ClickableText }
+            annotated.getStringAnnotations("TAG", off, off).firstOrNull()?.let { onTag(it.item); return@ClickableText }
+            annotated.getStringAnnotations("AT", off, off).firstOrNull()?.let { onMention?.invoke(it.item) }
         }
     )
 }

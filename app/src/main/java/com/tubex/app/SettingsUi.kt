@@ -106,9 +106,9 @@ fun settingsTopicTitle(i: Int): String = settingsTopics().getOrNull(i)?.title ?:
 
 /** টপিকের তালিকা (প্রিভিউতে onPick খালি দেওয়া হয়) */
 @Composable
-fun SettingsTopicList(onPick: (Int) -> Unit) {
+fun SettingsTopicList(scroll: ScrollState, onPick: (Int) -> Unit) {
     val topics = settingsTopics()
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 4.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(vertical = 4.dp)) {
         topics.forEachIndexed { i, t ->
             Row(
                 Modifier.fillMaxWidth().clickable { onPick(i) }.padding(horizontal = 16.dp, vertical = 12.dp),
@@ -145,7 +145,7 @@ fun SettingsTab(vm: MainViewModel, skipAnim: Boolean = false) {
         },
         label = "settingsPage"
     ) { p ->
-        if (p == null) SettingsTopicList { vm.settingsPage = it } else SettingsPage(vm, p)
+        if (p == null) SettingsTopicList(vm.settingsListScroll) { vm.settingsPage = it } else SettingsPage(vm, p)
     }
 }
 

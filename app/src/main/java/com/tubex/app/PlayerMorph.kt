@@ -65,14 +65,19 @@ fun MorphPlayer(
     LaunchedEffect(shown, landscape, vm.inPip) {
         if (shown) backAnim.progress = 0f
         if (landscape || vm.inPip) morph.snapTo(if (shown) 1f else 0f)
-        else morph.animateTo(if (shown) 1f else 0f, tween(320, easing = FastOutSlowInEasing))
+        else if (!shown) {
+            // নিচে টেনে ছোট করলে: টানা অবস্থা থেকেই বাকি পথ ভাসমান উইন্ডো পর্যন্ত যায় (কোনো লাফ নেই)
+            morph.snapTo(min(morph.value, 1f - vm.playerPull).coerceIn(0f, 1f))
+            vm.setPull(0f)
+            morph.animateTo(0f, tween(320, easing = FastOutSlowInEasing))
+        } else morph.animateTo(if (shown) 1f else 0f, tween(320, easing = FastOutSlowInEasing))
     }
 
     val visible by remember { derivedStateOf { morph.value > 0f } }
     if (shown || visible) {
         Box(
             Modifier.fillMaxSize().graphicsLayer {
-                val m = min(morph.value, 1f - backAnim.progress).coerceIn(0f, 1f)
+                val m = min(min(morph.value, 1f - backAnim.progress), 1f - vm.playerPull).coerceIn(0f, 1f)
                 if (m < 1f) {
                     val r = floatRect(vm, cw, ch, d)
                     val s0 = r.w / size.width

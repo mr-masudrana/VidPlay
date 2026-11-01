@@ -33,6 +33,8 @@ class PlayerGestures(
     private val isLandscape: () -> Boolean,
     private val onToggleFullscreen: () -> Unit,
     private val onMinimize: () -> Unit,
+    private val onPull: (Float) -> Unit,        // পোর্ট্রেটে নিচে টানার অগ্রগতি ০..১ (লাইভ)
+    private val onPullCancel: () -> Unit,       // থ্রেশহোল্ডের আগে ছেড়ে দিলে
     private val onHud: (String?) -> Unit
 ) : View.OnTouchListener {
 
@@ -125,7 +127,10 @@ class PlayerGestures(
             }
             val h = pv.height.coerceAtLeast(1).toFloat()
             when (mode) {
-                4 -> swipeDy = dy
+                4 -> {
+                    swipeDy = dy
+                    if (!isLandscape()) onPull(if (dy < 0f) (-dy / (pv.rootView.height * 0.4f).coerceAtLeast(1f)).coerceIn(0f, 1f) else 0f)
+                }
                 1 -> {
                     val delta = (dx / pv.width.coerceAtLeast(1) * 120_000f).toLong()
                     val dur = player.duration
@@ -179,11 +184,15 @@ class PlayerGestures(
                 onHud(null)
             }
             if (mode == 1) player.seekTo(seekTarget)
-            if (mode == 4 && e.action == MotionEvent.ACTION_UP) {
+            if (mode == 4) {
                 val thr = 64f * ctx.resources.displayMetrics.density
-                if (isLandscape()) { if (swipeDy < -thr) onToggleFullscreen() }          // নিচে সোয়াইপ → পোর্ট্রেট
-                else if (swipeDy > thr) onToggleFullscreen()                              // উপরে → ল্যান্ডস্কেপ
-                else if (swipeDy < -thr) onMinimize()                                     // নিচে → মিনি প্লেয়ার
+                var minimized = false
+                if (e.action == MotionEvent.ACTION_UP) {
+                    if (isLandscape()) { if (swipeDy < -thr) onToggleFullscreen() }          // নিচে সোয়াইপ → পোর্ট্রেট
+                    else if (swipeDy > thr) onToggleFullscreen()                              // উপরে → ল্যান্ডস্কেপ
+                    else if (swipeDy < -thr) { onMinimize(); minimized = true }               // নিচে → মিনি প্লেয়ার
+                }
+                if (!isLandscape() && !minimized) onPullCancel()
             }
             swipeDy = 0f
             if (mode != 0 && mode != 4) clearHudLater()
