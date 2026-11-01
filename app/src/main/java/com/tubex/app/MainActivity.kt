@@ -90,13 +90,29 @@ class MainActivity : ComponentActivity() {
         vm.openLink(url)
     }
 
-    // হোম বাটন চাপলে (ভিডিও চলাকালীন) PiP
+    /**
+     * PiP চালু করে (ভিডিও চলতে থাকলে ও PiP অন থাকলে)। ভাসমান মিনি প্লেয়ার থেকে হলে আগে প্লেয়ার পেজ পূর্ণ করে নেয়,
+     * যাতে PiP উইন্ডোতে হোম পেজ নয়, শুধু ভিডিও দেখায়।
+     */
+    fun enterPipFromApp(): Boolean {
+        if (Build.VERSION.SDK_INT < 26 || !vm.pipOn || !vm.active || !vm.player.isPlaying) return false
+        if (!vm.expanded) vm.expand()
+        return runCatching {
+            enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build())
+        }.getOrDefault(false)
+    }
+
+    // অ্যাপ নিজে অন্য স্ক্রিন (শেয়ার/ব্রাউজার ইত্যাদি) খুললেও অ্যান্ড্রয়েড onUserLeaveHint পাঠায়; সেটা যেন PiP না চালায়
+    private var selfLaunchAt = 0L
+    override fun startActivity(intent: Intent?, options: Bundle?) {
+        selfLaunchAt = android.os.SystemClock.uptimeMillis()
+        super.startActivity(intent, options)
+    }
+
+    // ফোনের হোম বাটন/জেসচারে বেরোলে PiP: প্লেয়ার পেজ খোলা থাকুক, বা যেকোনো পেজ/ট্যাবে মিনি প্লেয়ার (ভাসমান/নিচের বার) থাকুক
     override fun onUserLeaveHint() {
-        if (vm.pipOn && vm.active && vm.expanded && vm.player.isPlaying && Build.VERSION.SDK_INT >= 26) {
-            enterPictureInPictureMode(
-                PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build()
-            )
-        }
+        if (android.os.SystemClock.uptimeMillis() - selfLaunchAt < 1500) return
+        enterPipFromApp()      // ভিডিও চলছে ও PiP অন থাকলেই চালু হয়
     }
 
     // ব্যাকগ্রাউন্ড প্লে বন্ধ থাকলে অ্যাপ থেকে বেরোলে (PiP ছাড়া) প্লেব্যাক থামে

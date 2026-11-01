@@ -807,6 +807,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         else play(url)
     }
 
+    /** #হ্যাশট্যাগ ট্যাপ: সব ওভারলে/প্লেয়ার সরিয়ে "#ট্যাগ" সার্চ */
+    fun searchTag(tag: String) {
+        expanded = false; channelOpen = false; playlistOpen = false
+        tab = 0; searching = true
+        submitSearch("#$tag")
+    }
+
+    /** @হ্যান্ডেল ট্যাপ: চ্যানেল পেজ খোলে */
+    fun openMention(handle: String) = openChannel("https://www.youtube.com/@$handle")
+
     // ---------- ব্লক / আগ্রহ নেই ----------
     private fun filterBlocked(list: List<VideoItem>, extra: String? = null): List<VideoItem> {
         val set = blocks.value.map { it.entry }.toSet() + listOfNotNull(extra)
@@ -939,6 +949,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (playerPull <= 0f) return
         pullJob = viewModelScope.launch { animate(playerPull, 0f, animationSpec = tween(180)) { x, _ -> playerPull = x } }
     }
+    /** প্লেয়ার পেজ এখন পর্দায় খোলা আছে কিনা; থাকলে ব্যাক সবার আগে প্লেয়ারকে মিনিমাইজ করবে */
+    val playerShown: Boolean get() = expanded && (active || loadingNew)
     fun minimize() { expanded = false }
     fun close() {
         saveProgress(); recordSkip()

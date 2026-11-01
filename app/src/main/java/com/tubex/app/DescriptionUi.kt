@@ -160,11 +160,7 @@ fun DescriptionSheet(vm: MainViewModel, info: StreamInfo, onDismiss: () -> Unit)
             item {
                 Column(Modifier.padding(16.dp, 0.dp, 16.dp, 32.dp)) {
                     if (text.isBlank()) Text(L.t("কোনো বিবরণ নেই"), color = Sub)
-                    else SelectableLinkText(
-                        text,
-                        onUrl = { u -> runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u))) } },
-                        onSeek = { sec -> vm.player.seekTo(sec * 1000L); onDismiss() }
-                    )
+                    else LinkText(text, vm, onDone = onDismiss)
                 }
             }
         }
@@ -182,47 +178,85 @@ private fun Stat(value: String, label: String) {
 @Composable
 private fun linkColor(): Color = if (LocalPalette.current.light) Color(0xFF065FD4) else Color(0xFF3EA6FF)
 
-private val linkRegex = Regex("""(https?://[^\s<>"]+)|(?<![\d:])((?:\d{1,2}:)?\d{1,2}:\d{2})(?![\d:])""")
+/** URL | টাইমস্ট্যাম্প | #হ্যাশট্যাগ (বাংলা সহ) | @হ্যান্ডেল */
+private val linkRegex = Regex(
+    """(https?://[^\s<>"]+)""" +
+    """|(?<![\d:])((?:\d{1,2}:)?\d{1,2}:\d{2})(?![\d:])""" +
+    """|(?<![\p{L}\p{M}\p{N}_&/#])#((?=[\p{L}\p{M}\p{N}_]*[\p{L}\p{M}])[\p{L}\p{M}\p{N}_]+)""" +
+    """|(?<![\p{L}\p{M}\p{N}_.@])@([A-Za-z0-9_.\-]{3,30})"""
+)
 
-/** URL ও টাইমস্ট্যাম্প (১:২৩, ০১:২৩:৪৫) ট্যাপযোগ্য লেখা */
+private val inAppPaths = listOf("/watch", "/shorts", "/live", "/embed", "/playlist", "/channel/", "/c/", "/user/", "/@")
+
+/**
+ * ট্যাপযোগ্য লেখা: লিংক, টাইমস্ট্যাম্প (১:২৩), #হ্যাশট্যাগ (→ সার্চ), @হ্যান্ডেল (→ চ্যানেল)।
+ * ইউটিউবের লিংক অ্যাপের ভেতরেই খোলে, বাকিগুলো ব্রাউজারে। [onDone] = কিছু খোলার পর (যেমন শিট বন্ধ করতে)।
+ */
 @Composable
-fun SelectableLinkText(text: String, onUrl: (String) -> Unit, onSeek: (Long) -> Unit) {
+fun LinkText(
+    text: String, vm: MainViewModel, modifier: Modifier = Modifier,
+    fontSize: androidx.compose.ui.unit.TextUnit = 14.sp,
+    lineHeight: androidx.compose.ui.unit.TextUnit = 21.sp,
+    seek: Boolean = true,                    // টাইমস্ট্যাম্পে চলতি ভিডিও সিক হবে কিনা
+    onDone: () -> Unit = {}
+) {
+    val ctx = LocalContext.current
     val color = linkColor()
-    val annotated: AnnotatedString = remember(text, color) {
+    val annotated: AnnotatedString = remember(text, color, seek) {
         buildAnnotatedString {
+            val add = { tag: String, item: String, label: String, underline: Boolean ->
+                pushStringAnnotation(tag, item)
+                pushStyle(SpanStyle(color = color, textDecoration = if (underline) TextDecoration.Underline else null))
+                append(label)
+                pop(); pop()
+            }
             var last = 0
             for (m in linkRegex.findAll(text)) {
-                var start = m.range.first
+                val start = m.range.first
                 var end = m.range.last + 1
-                if (m.groups[1] != null) {
-                    var u = m.value
-                    while (u.isNotEmpty() && u.last() in ".,;:!?)]}\u2019\u201D") { u = u.dropLast(1); end-- }
-                    append(text.substring(last, start))
-                    pushStringAnnotation("URL", u)
-                    pushStyle(SpanStyle(color = color, textDecoration = TextDecoration.Underline))
-                    append(u)
-                    pop(); pop()
-                } else {
-                    val parts = m.value.split(":").map { it.toLong() }
-                    val sec = parts.fold(0L) { acc, p -> acc * 60 + p }
-                    append(text.substring(last, start))
-                    pushStringAnnotation("TS", sec.toString())
-                    pushStyle(SpanStyle(color = color))
-                    append(m.value)
-                    pop(); pop()
+                append(text.substring(last, start))
+                when {
+                    m.groups[1] != null -> {
+                        var u = m.value
+                        while (u.isNotEmpty() && u.last() in ".,;:!?)]}\u2019\u201D") { u = u.dropLast(1); end-- }
+                        add("URL", u, u, true)
+                    }
+                    m.groups[2] != null ->
+                        if (seek) {
+                            val sec = m.value.split(":").map { it.toLong() }.fold(0L) { acc, p -> acc * 60 + p }
+                            add("TS", sec.toString(), m.value, false)
+                        } else append(m.value)
+                    m.groups[3] != null -> add("TAG", m.groupValues[3], m.value, false)
+                    else -> {
+                        var h = m.groupValues[4]
+                        while (h.endsWith(".")) h = h.dropLast(1)
+                        if (h.length >= 3) { end = start + 1 + h.length; add("MEN", h, "@$h", false) }
+                        else append(m.value)
+                    }
                 }
                 last = end
             }
             append(text.substring(last))
         }
     }
+    fun openUrl(u: String) {
+        val uri = runCatching { Uri.parse(u) }.getOrNull()
+        val host = uri?.host?.lowercase().orEmpty()
+        val path = uri?.path.orEmpty()
+        val inApp = host == "youtu.be" ||
+            ((host == "youtube.com" || host.endsWith(".youtube.com")) && inAppPaths.any { path.startsWith(it) })
+        if (inApp) { vm.openLink(u); onDone() }
+        else runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u))) }
+    }
     @Suppress("DEPRECATION")
     ClickableText(
-        annotated,
-        style = TextStyle(color = MaterialTheme.colorScheme.onBackground, fontSize = 14.sp, lineHeight = 21.sp),
+        annotated, modifier = modifier,
+        style = TextStyle(color = MaterialTheme.colorScheme.onBackground, fontSize = fontSize, lineHeight = lineHeight),
         onClick = { off ->
-            annotated.getStringAnnotations("URL", off, off).firstOrNull()?.let { onUrl(it.item); return@ClickableText }
-            annotated.getStringAnnotations("TS", off, off).firstOrNull()?.let { onSeek(it.item.toLong()) }
+            annotated.getStringAnnotations("URL", off, off).firstOrNull()?.let { openUrl(it.item); return@ClickableText }
+            annotated.getStringAnnotations("TS", off, off).firstOrNull()?.let { vm.player.seekTo(it.item.toLong() * 1000L); onDone(); return@ClickableText }
+            annotated.getStringAnnotations("TAG", off, off).firstOrNull()?.let { vm.searchTag(it.item); onDone(); return@ClickableText }
+            annotated.getStringAnnotations("MEN", off, off).firstOrNull()?.let { vm.openMention(it.item); onDone() }
         }
     )
 }

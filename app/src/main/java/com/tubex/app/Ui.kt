@@ -203,7 +203,7 @@ fun YtApp(vm: MainViewModel) = CompositionLocalProvider(LocalVm provides vm) {
             enter = slideInHorizontally(tween(280)) { it / 3 } + fadeIn(tween(280)),
             exit = fadeOut(tween(240))
         ) {
-            PredictiveBackScreen(enabled = vm.channelOpen, onBack = { vm.closeChannel() }) { ChannelScreen(vm) }
+            PredictiveBackScreen(enabled = vm.channelOpen && !vm.playerShown, onBack = { vm.closeChannel() }) { ChannelScreen(vm) }
         }
         // ইউটিউব প্লেলিস্ট পেজ (চ্যানেল পেজের ওপরেও খোলে)
         AnimatedVisibility(
@@ -211,7 +211,7 @@ fun YtApp(vm: MainViewModel) = CompositionLocalProvider(LocalVm provides vm) {
             enter = slideInHorizontally(tween(280)) { it / 3 } + fadeIn(tween(280)),
             exit = fadeOut(tween(240))
         ) {
-            PredictiveBackScreen(enabled = vm.playlistOpen, onBack = { vm.closePlaylist() }) { PlaylistScreen(vm) }
+            PredictiveBackScreen(enabled = vm.playlistOpen && !vm.playerShown, onBack = { vm.closePlaylist() }) { PlaylistScreen(vm) }
         }
         val landscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
             android.content.res.Configuration.ORIENTATION_LANDSCAPE
@@ -364,8 +364,10 @@ fun MainScaffold(vm: MainViewModel) {
             Column(Modifier.graphicsLayer { translationY = bars.fraction * bars.navPx }) {
                 if (vm.active && !vm.expanded && !vm.floatingMini) MiniPlayer(vm)
                 // সেটিংস টপিক পেজ বা লাইব্রেরির "সব দেখুন" পেজে নিচের নেভ বার লুকানো থাকে
-                val navVisible = backActive ||
-                    !((vm.tab == 3 && vm.settingsPage != null) || (vm.tab == 2 && vm.libraryPage != null))
+                // সার্চ পেজে (সাজেশন/হিস্টোরি প্যানেল খোলা) নেভ বার থাকে না; রেজাল্ট পেজে থাকে
+                val searchPanelOpen = vm.tab == 0 && vm.searching && vm.showSuggestions
+                val navVisible = !searchPanelOpen && (backActive ||
+                    !((vm.tab == 3 && vm.settingsPage != null) || (vm.tab == 2 && vm.libraryPage != null)))
                 AnimatedVisibility(
                     visible = navVisible,
                     enter = expandVertically(tween(220)) + fadeIn(tween(220)),
@@ -445,7 +447,9 @@ fun HomeScreen(vm: MainViewModel, bars: BarsState, bottomPad: Dp) {
     val headerPx = with(density) { headerDp.toPx() }
     SideEffect { bars.headerPx = if (panel) 0f else headerPx }
 
-    LaunchedEffect(vm.searching) { if (vm.searching) runCatching { focus.requestFocus() } }
+    // সার্চ খুললে (সাজেশন প্যানেলসহ) ফোকাস; রেজাল্ট পেজে অন্য ট্যাব থেকে ফিরলে ফোকাস নয়,
+    // নইলে ফোকাস পেয়ে সাজেশন প্যানেল খুলে রেজাল্ট পেজের বদলে সার্চ পেজ দেখাত
+    LaunchedEffect(vm.searching) { if (vm.searching && vm.showSuggestions) runCatching { focus.requestFocus() } }
 
     // হোম ট্যাবে আবার ট্যাপ করলে স্মুথভাবে ওপরে
     var seenTick by remember { mutableStateOf(vm.homeTopTick) }
@@ -456,6 +460,14 @@ fun HomeScreen(vm: MainViewModel, bars: BarsState, bottomPad: Dp) {
             listState.animateScrollToItem(0)
         }
     }
+
+    // হোম ফিড নিচে স্ক্রোল করা থাকলে ব্যাকে অ্যাপ বন্ধ না হয়ে স্মুথভাবে ওপরে ওঠে (হোম ট্যাবে ট্যাপের মতোই);
+    // ওপরে থাকলে এটি বন্ধ থাকে, তাই ব্যাকে অ্যাপ বন্ধ হয়। প্লেয়ার/চ্যানেল/প্লেলিস্ট খোলা থাকলে সেগুলোর ব্যাক আগে চলে
+    val scrolledDown by remember { derivedStateOf { listState.canScrollBackward } }
+    BackHandler(
+        enabled = scrolledDown && vm.tab == 0 && !vm.searching &&
+            !vm.playerShown && !vm.channelOpen && !vm.playlistOpen
+    ) { vm.scrollHomeToTop() }
 
     // আঙুল ছাড়লে বার আধা-লুকানো অবস্থায় থাকে না: কাছের দিকে স্মুথভাবে গুটিয়ে/খুলে যায়
     LaunchedEffect(listState) {

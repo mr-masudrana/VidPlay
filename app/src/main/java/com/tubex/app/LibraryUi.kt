@@ -443,7 +443,7 @@ private fun PlaylistSection(vm: MainViewModel) {
 
 @Composable
 private fun PlaylistDetail(vm: MainViewModel, p: PlaylistRow, onBack: () -> Unit) {
-    BackHandler { onBack() }
+    BackHandler(enabled = !vm.playerShown) { onBack() }   // প্লেয়ার খোলা থাকলে ব্যাক আগে প্লেয়ার সামলায়
     val entries by remember(p.id) { vm.playlistItems(p.id) }.collectAsState(initial = emptyList())
     var name by remember(p.id) { mutableStateOf(p.name) }
     var renameOpen by remember { mutableStateOf(false) }

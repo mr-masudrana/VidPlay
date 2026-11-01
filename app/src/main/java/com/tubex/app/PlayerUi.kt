@@ -860,7 +860,7 @@ private fun CommentRow(vm: MainViewModel, c: CommentItem, indent: Boolean) {
             Spacer(Modifier.width(10.dp))
             Column {
                 Text("${c.author} • ${c.date}", color = Sub, fontSize = 12.sp)
-                Text(c.text, fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
+                LinkText(c.text, vm, fontSize = 14.sp, lineHeight = 20.sp, modifier = Modifier.padding(top = 2.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (c.likes.isNotBlank()) Text("👍 ${c.likes}", color = Sub, fontSize = 12.sp)
                     if (!indent && c.replies != null && c.replyCount != 0) TextButton(
