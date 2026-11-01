@@ -208,10 +208,10 @@ object YtRepository {
                     "Accept-Language" to listOf("en-US,en;q=0.9")
                 )
             ).responseBody() ?: ""
-            val handle = Regex(""""(?:vanityChannelUrl|canonicalBaseUrl)":"[^"]*?/(@[^"/\\]+)"""").find(html)
+            val handle = Regex("\"(?:vanityChannelUrl|canonicalBaseUrl)\":\"[^\"]*?/(@[^\"/\\\\]+)\"").find(html)
                 ?.groupValues?.get(1)?.let { runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrDefault(it) }
-            val count = Regex(""""content":"([\d.,]+[KMB]?) videos"""").find(html)?.groupValues?.get(1)
-                ?: Regex(""""videosCountText":\{"runs":\[\{"text":"([\d.,]+[KMB]?)"""").find(html)?.groupValues?.get(1)
+            val count = Regex("\"content\":\"([\\d.,]+[KMB]?) videos\"").find(html)?.groupValues?.get(1)
+                ?: Regex("\"videosCountText\":\\{\"runs\":\\[\\{\"text\":\"([\\d.,]+[KMB]?)\"").find(html)?.groupValues?.get(1)
             ChannelExtra(handle, count)
         }.getOrDefault(ChannelExtra(null, null))
     }
