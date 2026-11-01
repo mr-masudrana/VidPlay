@@ -163,9 +163,7 @@ fun DescriptionSheet(vm: MainViewModel, info: StreamInfo, onDismiss: () -> Unit)
                     else SelectableLinkText(
                         text,
                         onUrl = { u -> runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u))) } },
-                        onSeek = { sec -> vm.player.seekTo(sec * 1000L); onDismiss() },
-                        onTag = { t -> onDismiss(); vm.openHashtag(t) },
-                        onMention = { h -> onDismiss(); vm.openMention(h) }
+                        onSeek = { sec -> vm.player.seekTo(sec * 1000L); onDismiss() }
                     )
                 }
             }
@@ -184,64 +182,34 @@ private fun Stat(value: String, label: String) {
 @Composable
 private fun linkColor(): Color = if (LocalPalette.current.light) Color(0xFF065FD4) else Color(0xFF3EA6FF)
 
-private val linkRegex = Regex(
-    """(https?://[^\s<>"]+)|(?<![\d:])((?:\d{1,2}:)?\d{1,2}:\d{2})(?![\d:])""" +
-        """|((?<![\p{L}\p{M}\p{N}_&/])#(?=[\p{N}_]*[\p{L}\p{M}])[\p{L}\p{M}\p{N}_]+)""" +
-        """|((?<![\p{L}\p{M}\p{N}_.@/])@[\p{L}\p{M}\p{N}_.\-]{2,40})"""
-)
+private val linkRegex = Regex("""(https?://[^\s<>"]+)|(?<![\d:])((?:\d{1,2}:)?\d{1,2}:\d{2})(?![\d:])""")
 
-/** URL, টাইমস্ট্যাম্প (১:২৩), #হ্যাশট্যাগ ও @মেনশন ট্যাপযোগ্য লেখা */
+/** URL ও টাইমস্ট্যাম্প (১:২৩, ০১:২৩:৪৫) ট্যাপযোগ্য লেখা */
 @Composable
-fun SelectableLinkText(
-    text: String, onUrl: (String) -> Unit, onSeek: (Long) -> Unit,
-    onTag: (String) -> Unit = {}, onMention: ((String) -> Unit)? = null,
-    timestamps: Boolean = true
-) {
+fun SelectableLinkText(text: String, onUrl: (String) -> Unit, onSeek: (Long) -> Unit) {
     val color = linkColor()
-    val annotated: AnnotatedString = remember(text, color, timestamps, onMention != null) {
+    val annotated: AnnotatedString = remember(text, color) {
         buildAnnotatedString {
             var last = 0
             for (m in linkRegex.findAll(text)) {
-                val start = m.range.first
+                var start = m.range.first
                 var end = m.range.last + 1
-                when {
-                    m.groups[1] != null -> {
-                        var u = m.value
-                        while (u.isNotEmpty() && u.last() in ".,;:!?)]}\u2019\u201D") { u = u.dropLast(1); end-- }
-                        append(text.substring(last, start))
-                        pushStringAnnotation("URL", u)
-                        pushStyle(SpanStyle(color = color, textDecoration = TextDecoration.Underline))
-                        append(u)
-                        pop(); pop()
-                    }
-                    m.groups[2] != null -> {
-                        if (!timestamps) continue
-                        val parts = m.value.split(":").map { it.toLong() }
-                        val sec = parts.fold(0L) { acc, p -> acc * 60 + p }
-                        append(text.substring(last, start))
-                        pushStringAnnotation("TS", sec.toString())
-                        pushStyle(SpanStyle(color = color))
-                        append(m.value)
-                        pop(); pop()
-                    }
-                    m.groups[3] != null -> {
-                        append(text.substring(last, start))
-                        pushStringAnnotation("TAG", m.value)
-                        pushStyle(SpanStyle(color = color))
-                        append(m.value)
-                        pop(); pop()
-                    }
-                    else -> {
-                        if (onMention == null) continue
-                        val v = m.value.trimEnd('.', '-')
-                        if (v.length < 3) continue
-                        end = start + v.length
-                        append(text.substring(last, start))
-                        pushStringAnnotation("AT", v)
-                        pushStyle(SpanStyle(color = color))
-                        append(v)
-                        pop(); pop()
-                    }
+                if (m.groups[1] != null) {
+                    var u = m.value
+                    while (u.isNotEmpty() && u.last() in ".,;:!?)]}\u2019\u201D") { u = u.dropLast(1); end-- }
+                    append(text.substring(last, start))
+                    pushStringAnnotation("URL", u)
+                    pushStyle(SpanStyle(color = color, textDecoration = TextDecoration.Underline))
+                    append(u)
+                    pop(); pop()
+                } else {
+                    val parts = m.value.split(":").map { it.toLong() }
+                    val sec = parts.fold(0L) { acc, p -> acc * 60 + p }
+                    append(text.substring(last, start))
+                    pushStringAnnotation("TS", sec.toString())
+                    pushStyle(SpanStyle(color = color))
+                    append(m.value)
+                    pop(); pop()
                 }
                 last = end
             }
@@ -254,9 +222,7 @@ fun SelectableLinkText(
         style = TextStyle(color = MaterialTheme.colorScheme.onBackground, fontSize = 14.sp, lineHeight = 21.sp),
         onClick = { off ->
             annotated.getStringAnnotations("URL", off, off).firstOrNull()?.let { onUrl(it.item); return@ClickableText }
-            annotated.getStringAnnotations("TS", off, off).firstOrNull()?.let { onSeek(it.item.toLong()); return@ClickableText }
-            annotated.getStringAnnotations("TAG", off, off).firstOrNull()?.let { onTag(it.item); return@ClickableText }
-            annotated.getStringAnnotations("AT", off, off).firstOrNull()?.let { onMention?.invoke(it.item) }
+            annotated.getStringAnnotations("TS", off, off).firstOrNull()?.let { onSeek(it.item.toLong()) }
         }
     )
 }

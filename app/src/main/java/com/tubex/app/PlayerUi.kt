@@ -39,7 +39,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
@@ -854,22 +853,13 @@ private fun CommentsSheet(vm: MainViewModel, onDismiss: () -> Unit) {
 @Composable
 private fun CommentRow(vm: MainViewModel, c: CommentItem, indent: Boolean) {
     val rs = vm.replyStates[c.id]
-    val ctx = LocalContext.current
     Column(Modifier.padding(start = if (indent) 44.dp else 16.dp, end = 16.dp, top = 8.dp, bottom = 2.dp)) {
         Row {
             ChannelAvatar(c.avatar, c.authorUrl, c.author, if (indent) 24.dp else 32.dp)
             Spacer(Modifier.width(10.dp))
             Column {
                 Text("${c.author} • ${c.date}", color = Sub, fontSize = 12.sp)
-                // কমেন্টে @নাম আসলে হ্যান্ডেল না, ডিসপ্লে নাম — তাই এখানে মেনশন লিংক হয় না
-                Box(Modifier.padding(top = 2.dp)) {
-                    SelectableLinkText(
-                        c.text,
-                        onUrl = { u -> runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(u))) } },
-                        onSeek = { sec -> vm.player.seekTo(sec * 1000L) },
-                        onTag = { t -> vm.openHashtag(t) }
-                    )
-                }
+                Text(c.text, fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (c.likes.isNotBlank()) Text("👍 ${c.likes}", color = Sub, fontSize = 12.sp)
                     if (!indent && c.replies != null && c.replyCount != 0) TextButton(

@@ -203,15 +203,7 @@ fun YtApp(vm: MainViewModel) = CompositionLocalProvider(LocalVm provides vm) {
             enter = slideInHorizontally(tween(280)) { it / 3 } + fadeIn(tween(280)),
             exit = fadeOut(tween(240))
         ) {
-            PredictiveBackScreen(enabled = vm.channelOpen, onBack = { if (vm.channelAboutOpen) vm.closeChannelAbout() else vm.closeChannel() }) { ChannelScreen(vm) }
-        }
-        // ইউটিউব প্লেলিস্ট পেজ (চ্যানেলের ওপরে)
-        AnimatedVisibility(
-            visible = vm.ytPlOpen, modifier = Modifier.fillMaxSize(),
-            enter = slideInHorizontally(tween(280)) { it / 3 } + fadeIn(tween(280)),
-            exit = fadeOut(tween(240))
-        ) {
-            PredictiveBackScreen(enabled = vm.ytPlOpen, onBack = { vm.closeYtPlaylist() }) { YtPlaylistScreen(vm) }
+            PredictiveBackScreen(enabled = vm.channelOpen, onBack = { vm.closeChannel() }) { ChannelScreen(vm) }
         }
         val landscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
             android.content.res.Configuration.ORIENTATION_LANDSCAPE
@@ -445,7 +437,7 @@ fun HomeScreen(vm: MainViewModel, bars: BarsState, bottomPad: Dp) {
     val headerPx = with(density) { headerDp.toPx() }
     SideEffect { bars.headerPx = if (panel) 0f else headerPx }
 
-    LaunchedEffect(vm.searching) { if (vm.searching && vm.query.isEmpty()) runCatching { focus.requestFocus() } }
+    LaunchedEffect(vm.searching) { if (vm.searching) runCatching { focus.requestFocus() } }
 
     // হোম ট্যাবে আবার ট্যাপ করলে স্মুথভাবে ওপরে
     var seenTick by remember { mutableStateOf(vm.homeTopTick) }
@@ -626,21 +618,7 @@ private fun HomeFeed(vm: MainViewModel, shown: List<VideoItem>, listState: LazyL
                         TextButton(onClick = { vm.resetFilters() }) { Text(L.t("ফিল্টার মুছুন")) }
                     }
                 }
-                // সার্চ রেজাল্টে প্রথম ৩টি ভিডিওর পর প্লেলিস্ট সেকশন (ফিল্টার চালু থাকলে লুকানো)
-                val pls = if (vm.isSearchResult && !vm.filtersActive) vm.searchPlaylists.take(4) else emptyList()
-                val head = if (pls.isEmpty()) 0 else minOf(3, shown.size)
-                items(shown.take(head)) { v -> VideoCard(v, onChannel = { vm.openChannel(v.channelUrl) }) { vm.play(v.url) } }
-                if (pls.isNotEmpty()) {
-                    item {
-                        Text(
-                            L.t("প্লেলিস্ট"), fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(16.dp, 4.dp, 16.dp, 4.dp)
-                        )
-                    }
-                    items(pls) { p -> PlaylistResultRow(p) { vm.openYtPlaylist(p.url) } }
-                    item { Spacer(Modifier.height(12.dp)) }
-                }
-                items(shown.drop(head)) { v -> VideoCard(v, onChannel = { vm.openChannel(v.channelUrl) }) { vm.play(v.url) } }
+                items(shown) { v -> VideoCard(v, onChannel = { vm.openChannel(v.channelUrl) }) { vm.play(v.url) } }
             }
         }
     }

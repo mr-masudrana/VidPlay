@@ -196,28 +196,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var channelOpen by mutableStateOf(false); private set
     var channel by mutableStateOf<ChannelData?>(null); private set
     var channelLoading by mutableStateOf(false); private set
-    /** চ্যানেলের প্লেলিস্ট ট্যাব (null = এখনো লোড হয়নি) */
-    var channelPlaylists by mutableStateOf<List<PlaylistCard>?>(null); private set
-    var channelPlLoading by mutableStateOf(false); private set
-    /** চ্যানেলের ভিডিও (পেজ করে বাড়ে), সর্ট: 0 নতুন, 1 জনপ্রিয়, 2 পুরনো */
-    var channelVideos by mutableStateOf<List<VideoItem>>(emptyList()); private set
-    var channelHasMore by mutableStateOf(false); private set
-    var channelMoreLoading by mutableStateOf(false); private set
-    var channelSort by mutableStateOf(0); private set
-    var channelAboutOpen by mutableStateOf(false); private set
-    var channelExtra by mutableStateOf<ChannelExtra?>(null); private set
-    private var channelNext: Page? = null
-    private val extraCache = HashMap<String, ChannelExtra>()
-
-    // ইউটিউব প্লেলিস্ট পেজ
-    var ytPlOpen by mutableStateOf(false); private set
-    var ytPl by mutableStateOf<PlaylistData?>(null); private set
-    var ytPlLoading by mutableStateOf(false); private set
-    var ytPlError by mutableStateOf<String?>(null); private set
-    /** সার্চ রেজাল্টের সাথে দেখানো প্লেলিস্ট */
-    var searchPlaylists by mutableStateOf<List<PlaylistCard>>(emptyList()); private set
-    private var plJob: Job? = null
-    private var plSearchJob: Job? = null
 
     // রিকমেন্ডেশন ড্যাশবোর্ড
     var topInterests by mutableStateOf<List<Pair<String, Double>>>(emptyList()); private set
@@ -787,20 +765,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun reopenSuggestions() { showSuggestions = true }
 
-    /** #হ্যাশট্যাগে ট্যাপ: সব পেজ/প্লেয়ার সরিয়ে হোমে সেই ট্যাগ সার্চ */
-    fun openHashtag(tag: String) {
-        expanded = false; channelOpen = false; channelAboutOpen = false; ytPlOpen = false
-        tab = 0
-        submitSearch(tag)
-        searching = true
-    }
-
-    /** @হ্যান্ডেলে ট্যাপ: সেই চ্যানেল খোলে */
-    fun openMention(handle: String) {
-        ytPlOpen = false
-        openChannel("https://www.youtube.com/" + Uri.encode(handle, "@"))
-    }
-
     fun onQuery(q: String) {
         query = q; showSuggestions = true
         suggestJob?.cancel()
@@ -814,10 +778,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun submitSearch(q: String) {
         val t = q.trim()
         if (t.isEmpty()) return
-        // সার্চ বক্সে ইউটিউব লিংক (ভিডিও/প্লেলিস্ট/চ্যানেল) পেস্ট করলে সরাসরি খোলে
-        if (Regex("^https?://(www\\.|m\\.|music\\.)?(youtube\\.com|youtu\\.be)/\\S+$").matches(t)) {
-            showSuggestions = false; openLink(t); return
-        }
         query = t; showSuggestions = false
         if (saveSearchHist) {
             searchHistory = (listOf(t) + searchHistory.filter { it != t }).take(20)
@@ -825,17 +785,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch { Recommender.boostQuery(dao, t, 0.8) }
         load(t, search = true)
-        loadSearchPlaylists(t)
-    }
-
-    private fun loadSearchPlaylists(q: String) {
-        plSearchJob?.cancel()
-        searchPlaylists = emptyList()
-        plSearchJob = viewModelScope.launch {
-            try { searchPlaylists = YtRepository.searchPlaylists(q).take(10) }
-            catch (e: CancellationException) { throw e }
-            catch (e: Exception) { /* প্লেলিস্ট না এলে শুধু ভিডিও দেখাবে */ }
-        }
     }
 
     fun removeHistory(q: String) {
@@ -846,10 +795,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** YouTube লিংক/শেয়ার থেকে খোলা */
     fun openLink(raw: String) {
         val url = raw.trim()
-        val uri = Uri.parse(url)
-        val path = uri.path ?: ""
-        if (path.startsWith("/playlist") && !uri.getQueryParameter("list").isNullOrBlank()) openYtPlaylist(url)
-        else if (path.startsWith("/channel/") || path.startsWith("/c/") || path.startsWith("/user/") || path.startsWith("/@"))
+        val path = Uri.parse(url).path ?: ""
+        if (path.startsWith("/channel/") || path.startsWith("/c/") || path.startsWith("/user/") || path.startsWith("/@"))
             openChannel(url)
         else play(url)
     }
@@ -1200,22 +1147,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun openChannel(url: String?) {
         if (url == null) return
         expanded = false; channelOpen = true; channel = null
-        channelPlaylists = null; channelPlLoading = false
-        channelVideos = emptyList(); channelNext = null; channelHasMore = false; channelMoreLoading = false
-        channelSort = 0; channelAboutOpen = false; channelExtra = null
         viewModelScope.launch {
             channelLoading = true
 try {
                 val ch = YtRepository.channel(url)
                 channel = ch
-                channelVideos = ch.videos; channelNext = ch.videosNext; channelHasMore = ch.videosNext != null
-                val cached = extraCache[ch.url]
-                if (cached != null) channelExtra = cached
-                else viewModelScope.launch {
-                    val e = YtRepository.channelExtra(ch.url)
-                    extraCache[ch.url] = e
-                    if (channel?.url == ch.url) channelExtra = e
-                }
                 subs.value.firstOrNull { it.url == url || it.url == ch.url }?.let { s ->
                     if (s.avatar == null && ch.avatar != null) dao.addSub(s.copy(avatar = ch.avatar))
                 }
@@ -1223,101 +1159,7 @@ try {
             channelLoading = false
         }
     }
-    fun closeChannel() { channelOpen = false; channelAboutOpen = false }
-    fun openChannelAbout() { channelAboutOpen = true }
-    fun closeChannelAbout() { channelAboutOpen = false }
-
-    fun setChannelSort(i: Int) {
-        channelSort = i
-        if (i != 0) loadMoreChannelVideos(true)   // সর্টের জন্য আগে বেশি ভিডিও আনতে হয়
-    }
-
-    /** all = true হলে একসাথে কয়েক পেজ (সর্বোচ্চ ৮) আনে; নাহলে এক পেজ */
-    fun loadMoreChannelVideos(all: Boolean) {
-        val ch = channel ?: return
-        val tab = ch.videosTab ?: return
-        if (channelMoreLoading || channelNext == null) return
-        viewModelScope.launch {
-            channelMoreLoading = true
-            try {
-                var pages = 0
-                while (pages < (if (all) 8 else 1)) {
-                    val next = channelNext ?: break
-                    val r = YtRepository.moreChannelVideos(tab, next, ch)
-                    if (channel?.url != ch.url) return@launch
-                    channelVideos = (channelVideos + r.items).distinctBy { it.url }
-                    channelNext = r.next
-                    pages++
-                }
-            } catch (e: CancellationException) { throw e
-            } catch (e: Exception) { toast(e.message ?: L.t("লোড করা যায়নি")) }
-            if (channel?.url == ch.url) { channelHasMore = channelNext != null; channelMoreLoading = false }
-        }
-    }
-
-    /** চ্যানেলের লোড হওয়া ভিডিও কিউতে চালানো */
-    fun playChannelVideos(shuffleStart: Boolean) {
-        if (channelVideos.isEmpty()) return
-        if (!shuffleStart) shuffle = false
-        playQueueItems(channelVideos.map { QItem(it.url, it.title, it.channel, it.thumb) }, 0, shuffleStart)
-    }
-
-    /** চ্যানেল পেজের "প্লেলিস্ট" ট্যাব খুললে প্রথমবার লোড হয় */
-    fun loadChannelPlaylists() {
-        val tab = channel?.playlistsTab ?: run { channelPlaylists = emptyList(); return }
-        if (channelPlaylists != null || channelPlLoading) return
-        viewModelScope.launch {
-            channelPlLoading = true
-            try { channelPlaylists = YtRepository.channelPlaylists(tab) }
-            catch (e: CancellationException) { throw e }
-            catch (e: Exception) { channelPlaylists = emptyList(); toast(e.message ?: L.t("প্লেলিস্ট লোড করা যায়নি")) }
-            channelPlLoading = false
-        }
-    }
-
-    // ---------- ইউটিউব প্লেলিস্ট ----------
-    fun openYtPlaylist(url: String) {
-        expanded = false; ytPlOpen = true; ytPl = null; ytPlError = null
-        plJob?.cancel()
-        plJob = viewModelScope.launch {
-            ytPlLoading = true
-            try { ytPl = YtRepository.playlist(url) }
-            catch (e: CancellationException) { throw e }
-            catch (e: Exception) { ytPlError = e.message ?: L.t("প্লেলিস্ট লোড করা যায়নি") }
-            ytPlLoading = false
-        }
-    }
-    fun closeYtPlaylist() { ytPlOpen = false }
-
-    /** index থেকে চালু; shuffleStart হলে এলোমেলো ক্রমে */
-    fun playYtPlaylist(index: Int = 0, shuffleStart: Boolean = false) {
-        val pl = ytPl ?: return
-        if (pl.videos.isEmpty()) return
-        if (!shuffleStart) shuffle = false
-        playQueueItems(pl.videos.map { QItem(it.url, it.title, it.channel, it.thumb) }, index, shuffleStart)
-    }
-
-    /** পুরো ইউটিউব প্লেলিস্ট লোকাল প্লেলিস্ট হিসেবে সেভ */
-    fun saveYtPlaylist() {
-        val pl = ytPl ?: return
-        if (pl.videos.isEmpty()) return
-        viewModelScope.launch {
-            val base = pl.name.ifBlank { "Playlist" }
-            var name = base; var k = 2
-            while (dao.playlistIdByName(name) != null) { name = "$base ($k)"; k++ }
-            val now = System.currentTimeMillis()
-            val pid = dao.addPlaylist(PlaylistEntity(name = name, createdAt = now))
-            pl.videos.forEachIndexed { i, v ->
-                dao.addPlaylistItem(
-                    PlaylistItemEntity(
-                        playlistId = pid, url = v.url, title = v.title, channel = v.channel,
-                        thumb = v.thumb, durationSec = v.durationSec, addedAt = now + i
-                    )
-                )
-            }
-            toast(L.f("{0} টি ভিডিওসহ প্লেলিস্ট সেভ হয়েছে", pl.videos.size))
-        }
-    }
+    fun closeChannel() { channelOpen = false }
 
     fun toggleSub(url: String, name: String, avatar: String?) = viewModelScope.launch {
         if (subs.value.any { it.url == url }) dao.removeSub(url)

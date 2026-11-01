@@ -333,46 +333,21 @@ private fun HistoryList(vm: MainViewModel) {
         if (list.isEmpty()) Box(Modifier.fillMaxWidth().padding(32.dp), Alignment.Center) {
             Text(L.t("কিছু পাওয়া যায়নি"), color = Sub)
         }
-        // তারিখ অনুযায়ী ভাগ: আজ / গতকাল / তারিখ (নতুন আগে)
-        val groups = remember(list, L.en) { list.groupBy { dayLabel(it.watchedAt) } }
         LazyColumn {
-            groups.forEach { (label, group) ->
-                item(key = "day:$label") {
-                    Text(
-                        label, fontWeight = FontWeight.Bold, fontSize = 14.sp,
-                        modifier = Modifier.fillMaxWidth().padding(16.dp, 14.dp, 16.dp, 2.dp)
-                    )
-                }
-                items(group, key = { it.url }) { h ->
-                    Row(
-                        Modifier.fillMaxWidth().clickable { vm.play(h.url) }.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        HistoryThumb(h, Modifier.width(128.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)))
-                        Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                            Text(h.title, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Text(h.channel, color = Sub, fontSize = 12.sp, maxLines = 1, modifier = Modifier.padding(top = 4.dp))
-                        }
-                        IconButton(onClick = { vm.deleteHistoryItem(h.url) }) { Icon(Icons.Filled.Close, null) }
+            items(list, key = { it.url }) { h ->
+                Row(
+                    Modifier.fillMaxWidth().clickable { vm.play(h.url) }.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    HistoryThumb(h, Modifier.width(128.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)))
+                    Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                        Text(h.title, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(h.channel, color = Sub, fontSize = 12.sp, maxLines = 1, modifier = Modifier.padding(top = 4.dp))
                     }
+                    IconButton(onClick = { vm.deleteHistoryItem(h.url) }) { Icon(Icons.Filled.Close, null) }
                 }
             }
         }
-    }
-}
-
-/** আজ / গতকাল / "১২ নভেম্বর, ২০২৬" */
-private fun dayLabel(ms: Long): String {
-    val zone = java.time.ZoneId.systemDefault()
-    val d = java.time.Instant.ofEpochMilli(ms).atZone(zone).toLocalDate()
-    val today = java.time.LocalDate.now(zone)
-    return when (d) {
-        today -> L.t("আজ")
-        today.minusDays(1) -> L.t("গতকাল")
-        else -> runCatching {
-            java.time.format.DateTimeFormatter.ofLocalizedDate(java.time.format.FormatStyle.LONG)
-                .withLocale(if (L.en) java.util.Locale.ENGLISH else java.util.Locale("bn")).format(d)
-        }.getOrDefault(d.toString())
     }
 }
 
