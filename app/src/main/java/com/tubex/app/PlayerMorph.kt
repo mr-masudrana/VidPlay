@@ -78,7 +78,7 @@ fun MorphPlayer(
         Box(
             Modifier.fillMaxSize().graphicsLayer {
                 val m = min(min(morph.value, 1f - backAnim.progress), 1f - vm.playerPull).coerceIn(0f, 1f)
-                if (m < 1f) {
+                if (m < 1f && size.width > 0f && size.height > 0f) {
                     val r = floatRect(vm, cw, ch, d)
                     val s0 = r.w / size.width
                     val s = lerp(s0, 1f, m)

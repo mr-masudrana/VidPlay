@@ -128,8 +128,10 @@ class PlayerGestures(
             val h = pv.height.coerceAtLeast(1).toFloat()
             when (mode) {
                 4 -> {
-                    swipeDy = dy
-                    if (!isLandscape()) onPull(if (dy < 0f) (-dy / (pv.rootView.height * 0.4f).coerceAtLeast(1f)).coerceIn(0f, 1f) else 0f)
+                    // স্ক্রিনের আসল কোঅর্ডিনেট (প্লেয়ার নিজে সরলেও মান স্থির থাকে → কাঁপাকাঁপি নেই)
+                    val rawDy = TouchRaw.downY - TouchRaw.y      // উপরে টানলে ধনাত্মক
+                    swipeDy = rawDy
+                    if (!isLandscape()) onPull(if (rawDy < 0f) (-rawDy / (pv.rootView.height * 0.4f).coerceAtLeast(1f)).coerceIn(0f, 1f) else 0f)
                 }
                 1 -> {
                     val delta = (dx / pv.width.coerceAtLeast(1) * 120_000f).toLong()

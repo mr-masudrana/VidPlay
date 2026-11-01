@@ -205,6 +205,14 @@ fun YtApp(vm: MainViewModel) = CompositionLocalProvider(LocalVm provides vm) {
         ) {
             PredictiveBackScreen(enabled = vm.channelOpen, onBack = { vm.closeChannel() }) { ChannelScreen(vm) }
         }
+        // ইউটিউব প্লেলিস্ট পেজ (চ্যানেল পেজের ওপরেও খোলে)
+        AnimatedVisibility(
+            visible = vm.playlistOpen, modifier = Modifier.fillMaxSize(),
+            enter = slideInHorizontally(tween(280)) { it / 3 } + fadeIn(tween(280)),
+            exit = fadeOut(tween(240))
+        ) {
+            PredictiveBackScreen(enabled = vm.playlistOpen, onBack = { vm.closePlaylist() }) { PlaylistScreen(vm) }
+        }
         val landscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
             android.content.res.Configuration.ORIENTATION_LANDSCAPE
         val playerShown = vm.expanded && (vm.active || vm.loadingNew)

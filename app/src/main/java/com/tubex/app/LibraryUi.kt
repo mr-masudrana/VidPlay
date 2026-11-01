@@ -410,6 +410,16 @@ private fun PlaylistSection(vm: MainViewModel) {
             Spacer(Modifier.width(8.dp))
             Button(enabled = newName.isNotBlank(), onClick = { vm.createPlaylist(newName); newName = "" }) { Text(L.t("তৈরি")) }
         }
+        // ইউটিউব প্লেলিস্টের লিংক পেস্ট করে খোলা (চালানো বা লাইব্রেরিতে সেভ করা যায়)
+        var link by remember { mutableStateOf("") }
+        Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = link, onValueChange = { link = it }, singleLine = true,
+                label = { Text(L.t("ইউটিউব প্লেলিস্ট লিংক")) }, modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.width(8.dp))
+            Button(enabled = link.isNotBlank(), onClick = { vm.openLink(link); link = "" }) { Text(L.t("লিংক খুলুন")) }
+        }
         if (lists.isEmpty()) Box(Modifier.fillMaxWidth().padding(32.dp), Alignment.Center) {
             Text(L.t("কোনো প্লেলিস্ট নেই"), color = Sub)
         }

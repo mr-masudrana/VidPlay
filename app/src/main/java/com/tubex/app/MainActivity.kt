@@ -65,6 +65,13 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) handleIntent(intent)
     }
 
+    // আসল (অপরিবর্তিত) টাচের স্ক্রিন-কোঅর্ডিনেট রাখে: প্লেয়ার টানার সময় প্লেয়ার নিজে স্কেল/সরে যায়, তাই তার লোকাল কোঅর্ডিনেট ভরসাযোগ্য নয়
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        if (ev.actionMasked == android.view.MotionEvent.ACTION_DOWN) TouchRaw.downY = ev.rawY
+        TouchRaw.y = ev.rawY
+        return super.dispatchTouchEvent(ev)
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -114,4 +121,10 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val ACTION_OPEN_PLAYER = "com.tubex.app.OPEN_PLAYER"
     }
+}
+
+/** Activity-তে আসা আসল টাচের স্ক্রিন Y (px) */
+object TouchRaw {
+    @JvmField var downY = 0f
+    @JvmField var y = 0f
 }

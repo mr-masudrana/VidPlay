@@ -778,6 +778,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun submitSearch(q: String) {
         val t = q.trim()
         if (t.isEmpty()) return
+        // ইউটিউব লিংক পেস্ট করলে সার্চ না করে সরাসরি খোলে (ভিডিও/চ্যানেল/প্লেলিস্ট)
+        if (Regex("^https?://(www\\.|m\\.|music\\.)?(youtube\\.com|youtu\\.be)/\\S+$", RegexOption.IGNORE_CASE).matches(t)) {
+            showSuggestions = false; openLink(t); return
+        }
         query = t; showSuggestions = false
         if (saveSearchHist) {
             searchHistory = (listOf(t) + searchHistory.filter { it != t }).take(20)
@@ -795,8 +799,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** YouTube লিংক/শেয়ার থেকে খোলা */
     fun openLink(raw: String) {
         val url = raw.trim()
-        val path = Uri.parse(url).path ?: ""
-        if (path.startsWith("/channel/") || path.startsWith("/c/") || path.startsWith("/user/") || path.startsWith("/@"))
+        val uri = Uri.parse(url)
+        val path = uri.path ?: ""
+        if (path == "/playlist" && !uri.getQueryParameter("list").isNullOrBlank()) openPlaylist(url)
+        else if (path.startsWith("/channel/") || path.startsWith("/c/") || path.startsWith("/user/") || path.startsWith("/@"))
             openChannel(url)
         else play(url)
     }
@@ -1147,6 +1153,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun openChannel(url: String?) {
         if (url == null) return
         expanded = false; channelOpen = true; channel = null
+        channelPlaylists = null; channelPlaylistsNext = null
         viewModelScope.launch {
             channelLoading = true
 try {
@@ -1160,6 +1167,138 @@ try {
         }
     }
     fun closeChannel() { channelOpen = false }
+
+    // ---------- চ্যানেলের প্লেলিস্ট ট্যাব ----------
+    var channelPlaylists by mutableStateOf<List<PlaylistEntry>?>(null); private set   // null = এখনো লোড হয়নি
+    private var channelPlaylistsNext: Page? = null
+    var channelPlaylistsLoading by mutableStateOf(false); private set
+    fun loadChannelPlaylists(more: Boolean = false) {
+        val ch = channel ?: return
+        val tab = ch.playlistsTab ?: return
+        if (channelPlaylistsLoading) return
+        if (more && channelPlaylistsNext == null) return
+        if (!more && channelPlaylists != null) return
+        viewModelScope.launch {
+            channelPlaylistsLoading = true
+            try {
+                val (list, nx) = if (more) YtRepository.channelPlaylistsMore(tab, channelPlaylistsNext!!)
+                else YtRepository.channelPlaylists(tab)
+                if (channel?.url == ch.url) {
+                    channelPlaylists = (if (more) channelPlaylists.orEmpty() else emptyList()) + list
+                    channelPlaylistsNext = nx
+                }
+            } catch (e: Exception) {
+                if (channel?.url == ch.url) { channelPlaylists = channelPlaylists ?: emptyList(); channelPlaylistsNext = null }
+            }
+            channelPlaylistsLoading = false
+        }
+    }
+
+    // ---------- ইউটিউব প্লেলিস্ট (অনলাইন): খোলা, চালানো, লাইব্রেরিতে সেভ ----------
+    var playlistOpen by mutableStateOf(false); private set
+    var onlinePlaylist by mutableStateOf<PlaylistData?>(null); private set
+    var playlistLoading by mutableStateOf(false); private set
+    var playlistMoreLoading by mutableStateOf(false); private set
+
+    fun openPlaylist(url: String) {
+        expanded = false; playlistOpen = true; onlinePlaylist = null
+        viewModelScope.launch {
+            playlistLoading = true
+            try { onlinePlaylist = YtRepository.playlist(url) } catch (e: Exception) { /* স্ক্রিনে "লোড করা যায়নি" দেখায় */ }
+            playlistLoading = false
+        }
+    }
+    fun closePlaylist() { playlistOpen = false }
+
+    fun loadMorePlaylist() {
+        val pl = onlinePlaylist ?: return
+        val next = pl.next ?: return
+        if (playlistMoreLoading) return
+        viewModelScope.launch {
+            playlistMoreLoading = true
+            try {
+                val (list, nx) = YtRepository.playlistMore(pl.url, next)
+                val cur = onlinePlaylist
+                if (cur != null && cur.url == pl.url) onlinePlaylist = cur.copy(videos = cur.videos + list, next = nx)
+            } catch (e: Exception) {
+                val cur = onlinePlaylist
+                if (cur != null && cur.url == pl.url) onlinePlaylist = cur.copy(next = null)
+            }
+            playlistMoreLoading = false
+        }
+    }
+
+    /** বাকি সব পেজ লোড (সর্বোচ্চ ৫০০ ভিডিও) এবং পুরো তালিকা ফেরত */
+    private suspend fun loadAllPlaylist(): List<VideoItem> {
+        while (playlistMoreLoading) kotlinx.coroutines.delay(100)
+        var pl = onlinePlaylist ?: return emptyList()
+        var guard = 0
+        while (pl.next != null && pl.videos.size < 500 && guard++ < 30) {
+            val (list, nx) = try { YtRepository.playlistMore(pl.url, pl.next!!) } catch (e: Exception) { Pair(emptyList<VideoItem>(), null) }
+            pl = pl.copy(videos = pl.videos + list, next = nx)
+        }
+        if (onlinePlaylist?.url == pl.url) onlinePlaylist = pl
+        return pl.videos
+    }
+
+    private fun VideoItem.toQ() = QItem(url, title, channel, thumb)
+
+    /** index নম্বর থেকে (বা শাফল করে) প্লেলিস্ট চালায়; বাকি পেজগুলো পেছনে লোড হয়ে কিউতে যোগ হয় */
+    fun playPlaylistFrom(index: Int, shuffleStart: Boolean = false) {
+        val pl = onlinePlaylist ?: return
+        if (pl.videos.isEmpty()) return
+        playQueueItems(pl.videos.map { it.toQ() }, index, shuffleStart)
+        val queued = queueItems
+        if (pl.next != null) viewModelScope.launch {
+            val all = loadAllPlaylist()
+            if (queueItems === queued && all.size > queued.size) queueItems = all.map { it.toQ() }   // এখনো একই কিউ থাকলে বাড়াই
+        }
+    }
+
+    /** পুরো প্লেলিস্ট লাইব্রেরির লোকাল প্লেলিস্ট হিসেবে সেভ */
+    fun saveOnlinePlaylist() {
+        val pl = onlinePlaylist ?: return
+        viewModelScope.launch {
+            toast(L.t("সেভ হচ্ছে…"))
+            val all = loadAllPlaylist()
+            if (all.isEmpty()) { toast(L.t("সেভ করা যায়নি")); return@launch }
+            val existing = dao.playlistsOnce().map { it.name }.toSet()
+            val base = pl.name.ifBlank { "Playlist" }
+            var name = base; var n = 2
+            while (name in existing) { name = "$base ($n)"; n++ }
+            val now = System.currentTimeMillis()
+            val id = dao.addPlaylist(PlaylistEntity(name = name, createdAt = now))
+            all.forEachIndexed { i, v ->
+                dao.addPlaylistItem(PlaylistItemEntity(
+                    playlistId = id, url = v.url, title = v.title, channel = v.channel,
+                    thumb = v.thumb, durationSec = v.durationSec, addedAt = now + i
+                ))
+            }
+            toast(L.f("\"{0}\" লাইব্রেরিতে সেভ হয়েছে", name))
+        }
+    }
+
+    var channelMoreLoading by mutableStateOf(false); private set
+    /** চ্যানেলের ভিডিও ট্যাবের পরের পেজ লোড (স্ক্রল শেষের কাছে এলে) */
+    fun loadMoreChannelVideos() {
+        val ch = channel ?: return
+        if (channelMoreLoading || ch.next == null || ch.tab == null) return
+        viewModelScope.launch {
+            channelMoreLoading = true
+            try {
+                val (list, next) = YtRepository.channelMore(ch)
+                val cur = channel
+                if (cur != null && cur.url == ch.url) {
+                    val seen = cur.videos.mapTo(HashSet()) { it.url }
+                    channel = cur.copy(videos = cur.videos + list.filter { seen.add(it.url) }, next = next)
+                }
+            } catch (e: Exception) {
+                val cur = channel   // বারবার ব্যর্থ চেষ্টা এড়াতে এখানেই থামি
+                if (cur != null && cur.url == ch.url) channel = cur.copy(next = null)
+            }
+            channelMoreLoading = false
+        }
+    }
 
     fun toggleSub(url: String, name: String, avatar: String?) = viewModelScope.launch {
         if (subs.value.any { it.url == url }) dao.removeSub(url)
