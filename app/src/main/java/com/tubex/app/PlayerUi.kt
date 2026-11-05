@@ -14,6 +14,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -48,6 +49,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.util.lerp
 import androidx.compose.ui.platform.LocalDensity
@@ -55,6 +57,11 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
@@ -77,9 +84,12 @@ fun PlayerScreen(vm: MainViewModel) {
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     // ফুলস্ক্রিন বদলের অ্যানিমেশন: ভিডিও বক্স ঘুরে (±৯০°) ও মাপ বদলে নতুন অবস্থার দিকে যায়, তারপর স্ক্রিন ঘোরে
+    val themeBg = Bg.toArgb()
+    val themeLight = LocalPalette.current.light
     val scope = rememberCoroutineScope()
     val fsProg = remember { Animatable(0f) }
     var fsToLandscape by remember { mutableStateOf(true) }
+    var fsFromLandscape by remember { mutableStateOf(false) }   // কোন অবস্থা থেকে অ্যানিমেশন শুরু (ঘোরার পর ভুল ফ্রেম আটকাতে)
     var lastStatusPx by remember { mutableStateOf(0f) }
     val statusNow = WindowInsets.statusBars.getTop(LocalDensity.current).toFloat()
     SideEffect { if (!landscape && statusNow > 0f) lastStatusPx = statusNow }
@@ -89,8 +99,18 @@ fun PlayerScreen(vm: MainViewModel) {
         if (fsProg.value > 0f || fsProg.isRunning) return
         val target = if (landscape) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         fsToLandscape = !landscape
+        fsFromLandscape = landscape
         scope.launch {
             fsProg.animateTo(1f, tween(240, easing = FastOutSlowInEasing))
+            // বার/কাটআউট বদল ঘোরার সাথে একই মুহূর্তে, যাতে আলাদা করে দ্বিতীয় লাফ না হয়
+            activity?.window?.let { w ->
+                val c = WindowCompat.getInsetsController(w, view)
+                setFullscreenWindow(w, view, fsToLandscape, themeBg, themeLight)
+                if (fsToLandscape) {
+                    c.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    c.hide(WindowInsetsCompat.Type.systemBars())
+                } else c.show(WindowInsetsCompat.Type.systemBars())
+            }
             activity?.requestedOrientation = target
             delay(1500); fsProg.snapTo(0f)            // নিরাপত্তা: ঘোরা না হলেও আটকে থাকবে না
         }
@@ -98,9 +118,6 @@ fun PlayerScreen(vm: MainViewModel) {
 
     // পোর্ট্রেটে ব্যাক জেসচার YtApp-এর PredictiveBackScreen সামলায়; ফুলস্ক্রিনে (ল্যান্ডস্কেপ) এখানে
     BackHandler(enabled = landscape) { toggleFullscreen() }
-
-    val themeBg = Bg.toArgb()
-    val themeLight = LocalPalette.current.light
 
     // ফুলস্ক্রিন = ল্যান্ডস্কেপ: সিস্টেম বার লুকানো
     LaunchedEffect(landscape) {
@@ -115,8 +132,19 @@ fun PlayerScreen(vm: MainViewModel) {
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
+    // সিস্টেমের ডিফল্ট "ঘোরা" অ্যানিমেশনের বদলে ক্রসফেড (অ্যাপ নিজেই configChanges সামলায়)
     DisposableEffect(Unit) {
+        activity?.window?.let { w ->
+            val a = w.attributes
+            a.rotationAnimation = android.view.WindowManager.LayoutParams.ROTATION_ANIMATION_CROSSFADE
+            w.attributes = a
+        }
         onDispose {
+            activity?.window?.let { w ->
+                val a = w.attributes
+                a.rotationAnimation = android.view.WindowManager.LayoutParams.ROTATION_ANIMATION_UNSPECIFIED
+                w.attributes = a
+            }
             activity?.let {
                 setFullscreenWindow(it.window, view, false, themeBg, themeLight)
                 it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
@@ -130,10 +158,18 @@ fun PlayerScreen(vm: MainViewModel) {
         return
     }
 
+    // পোর্ট্রেটে ফেরার সময় ভারী Details (LazyColumn) ঘোরার ফ্রেমে না এঁকে দু-ফ্রেম পরে ফেড-ইন
+    var detailsReady by remember { mutableStateOf(!landscape) }
+    LaunchedEffect(landscape) {
+        if (landscape) detailsReady = false
+        else { withFrameNanos { }; withFrameNanos { }; detailsReady = true }
+    }
+
     val density = LocalDensity.current.density
     val fsMod = Modifier.zIndex(1f).graphicsLayer {
         val pr = fsProg.value
-        if (pr > 0f) {
+        // ঘোরা শেষে নতুন লেআউটে পুরোনো ট্রান্সফর্ম এক ফ্রেমও প্রয়োগ হবে না
+        if (pr > 0f && landscape == fsFromLandscape) {
             val sw = view.width.toFloat(); val sh = view.height.toFloat()
             if (fsToLandscape) {            // পোর্ট্রেট → ল্যান্ডস্কেপ: ঘুরে (-৯০°) বড় হয়ে পর্দার মাঝে
                 val s = lerp(1f, minOf(sh, sw * 16f / 9f) / sw, pr)
@@ -160,7 +196,7 @@ fun PlayerScreen(vm: MainViewModel) {
             if (!landscape) PlayerDetailsSkeleton(vm.loadingHint?.title)
         } else {
             PlayerBox(vm, landscape, overlay = true, onFullscreen = { toggleFullscreen() }, modifier = boxModifier)
-            if (!landscape) Details(vm)
+            if (!landscape) AnimatedVisibility(detailsReady, enter = fadeIn(tween(220)), exit = ExitTransition.None) { Details(vm) }
         }
     }
 }
@@ -183,10 +219,13 @@ private fun setFullscreenWindow(win: android.view.Window, view: View, full: Bool
     if (android.os.Build.VERSION.SDK_INT >= 29) win.isNavigationBarContrastEnforced = !full
     if (android.os.Build.VERSION.SDK_INT >= 28) {
         val a = win.attributes
-        a.layoutInDisplayCutoutMode = if (full)
+        val mode = if (full)
             android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
         else android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
-        win.attributes = a
+        if (a.layoutInDisplayCutoutMode != mode) {   // একই মান হলে অকারণ রিলেআউট নয়
+            a.layoutInDisplayCutoutMode = mode
+            win.attributes = a
+        }
     }
 }
 
@@ -200,6 +239,7 @@ private fun PlayerBox(
     var showSettings by remember { mutableStateOf(false) }
     var showCaptions by remember { mutableStateOf(false) }
     var hud by remember { mutableStateOf<Hud?>(null) }
+    var playerView by remember { mutableStateOf<PlayerView?>(null) }
     val sizes = floatArrayOf(0.04f, 0.0533f, 0.07f)
 
     // AndroidView-এর factory একবারই চলে, তাই সর্বশেষ মান রাখার জন্য
@@ -212,6 +252,7 @@ private fun PlayerBox(
         AndroidView(
             factory = { c ->
                 PlayerView(c).apply {
+                    playerView = this
                     player = vm.controllerPlayer
                     // ৫সে পেছনে/১৫সে সামনে বাটনের জায়গায় আগের/পরের ভিডিও বাটন
                     setShowRewindButton(false); setShowFastForwardButton(false)
@@ -219,17 +260,13 @@ private fun PlayerBox(
                     // কন্ট্রোলারের নিচের ডানের ডিফল্ট সেটিংস গিয়ার বাদ (সেটিংস এখন ওপরে ডানে)
                     findViewById<View>(androidx.media3.ui.R.id.exo_settings)?.visibility = View.GONE
                     // ExoPlayer-এর নিজস্ব কালো স্ক্রিম/ব্যাকগ্রাউন্ড সরানো
-                    val dn = c.resources.displayMetrics.density
                     findViewById<View>(androidx.media3.ui.R.id.exo_controls_background)?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                    // প্রগ্রেস বার একদম নিচে নামানো; সময়ের সারি তার ওপরে উঠে আসে
-                    findViewById<View>(androidx.media3.ui.R.id.exo_bottom_bar)?.apply {
-                        setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                        translationY = -BAR_LIFT_DP * dn
-                    }
-                    findViewById<View>(androidx.media3.ui.R.id.exo_progress)?.addOnLayoutChangeListener { v, _, _, _, bottom, _, _, _, _ ->
-                        val parentH = (v.parent as? View)?.height ?: return@addOnLayoutChangeListener
-                        v.translationY = parentH - bottom + 12 * dn   // বারের মাঝ বরাবর নিচের কিনারা থেকে ~১২dp ওপরে
-                    }
+                    // নিচের সারি (সময় + ফুলস্ক্রিন বাটন) এখন Compose-এ আঁকা; ExoPlayer-এর নিচের বার পুরোটা লুকানো
+                    findViewById<View>(androidx.media3.ui.R.id.exo_bottom_bar)?.visibility = View.GONE
+                    findViewById<View>(androidx.media3.ui.R.id.exo_position)?.visibility = View.GONE
+                    findViewById<View>(androidx.media3.ui.R.id.exo_duration)?.visibility = View.GONE
+                    // ExoPlayer-এর মাঝখানের প্রগ্রেস বার লুকানো; এর বদলে নিচের BottomSeekBar ব্যবহার হয়
+                    findViewById<View>(androidx.media3.ui.R.id.exo_progress)?.visibility = View.GONE
                     controls = isControllerFullyVisible
                     setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { v ->
                         controls = v == View.VISIBLE
@@ -318,12 +355,18 @@ private fun PlayerBox(
             }
         }
 
-        // নিচের ডানে: মাপ (ল্যান্ডস্কেপ), ফুলস্ক্রিন
-        if (overlay) AnimatedVisibility(showBars, Modifier.align(Alignment.BottomEnd)) {
+        // ভিডিওর একদম নিচে প্রগ্রেস/সিক বার
+        if (overlay) BottomSeekBar(vm, controls || vm.audioArt) { playerView?.showController() }
+
+        // নিচের সারি: বামে সময়, ডানে মাপ (ল্যান্ডস্কেপ) ও ফুলস্ক্রিন/পোর্ট্রেট বাটন — সময়ের লাইন বরাবর
+        if (overlay) AnimatedVisibility(showBars, Modifier.align(Alignment.BottomStart).fillMaxWidth()) {
             Row(
-                Modifier.padding(end = 8.dp, bottom = (BAR_LIFT_DP + 4).dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)
+                Modifier.fillMaxWidth().padding(start = 12.dp, end = 8.dp, bottom = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                Text(fmtTime(vm.positionMs / 1000), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Text("  ·  " + fmtTime(vm.durationMs / 1000), color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
+                Spacer(Modifier.weight(1f))
                 if (landscape) PlayerIconButton(
                     Icons.Rounded.AspectRatio, tint = if (vm.resizeMode != 0) YtRed else Color.White
                 ) {
@@ -339,7 +382,55 @@ private fun PlayerBox(
     if (showSettings) PlayerSettingsSheet(vm) { showSettings = false }
 }
 
-private const val BAR_LIFT_DP = 20
+
+/** ভিডিওর একদম নিচের কিনারায় প্রগ্রেস/সিক বার (ট্যাপ ও ড্র্যাগ করে সিক করা যায়) */
+@Composable
+private fun BoxScope.BottomSeekBar(vm: MainViewModel, visible: Boolean, onTouch: () -> Unit) {
+    var drag by remember { mutableStateOf<Float?>(null) }
+    var w by remember { mutableStateOf(0) }
+    val dur = vm.durationMs
+    val frac = drag ?: if (dur > 0) (vm.positionMs.toFloat() / dur).coerceIn(0f, 1f) else 0f
+    val r = with(LocalDensity.current) { 6.dp.toPx() }
+
+    // কন্ট্রোল লুকানো থাকলে YouTube-এর মতো পাতলা রঙিন লাইন
+    AnimatedVisibility(!visible, Modifier.align(Alignment.BottomCenter).fillMaxWidth(), enter = fadeIn(), exit = fadeOut()) {
+        Box(Modifier.fillMaxWidth().height(2.dp)) {
+            Box(Modifier.fillMaxSize().background(Color(0x4DFFFFFF)))
+            Box(Modifier.fillMaxHeight().fillMaxWidth(frac).background(YtRed))
+        }
+    }
+
+    AnimatedVisibility(visible, Modifier.align(Alignment.BottomCenter).fillMaxWidth(), enter = fadeIn(), exit = fadeOut()) {
+        Box(
+            Modifier.fillMaxWidth().height(22.dp)
+                .onSizeChanged { w = it.width }
+                .pointerInput(dur) {
+                    detectTapGestures { o ->
+                        if (dur > 0 && size.width > 0) {
+                            vm.player.seekTo(((o.x / size.width).coerceIn(0f, 1f) * dur).toLong())
+                            onTouch()
+                        }
+                    }
+                }
+                .pointerInput(dur) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { o -> drag = (o.x / size.width).coerceIn(0f, 1f); onTouch() },
+                        onDragEnd = { drag?.let { f -> if (dur > 0) vm.player.seekTo((f * dur).toLong()) }; drag = null },
+                        onDragCancel = { drag = null },
+                        onHorizontalDrag = { ch, _ -> ch.consume(); drag = (ch.position.x / size.width).coerceIn(0f, 1f); onTouch() }
+                    )
+                }
+        ) {
+            Box(Modifier.align(Alignment.BottomStart).padding(bottom = 5.dp).fillMaxWidth().height(3.dp).background(Color(0x4DFFFFFF)))
+            Box(Modifier.align(Alignment.BottomStart).padding(bottom = 5.dp).fillMaxWidth(frac).height(3.dp).background(YtRed))
+            Box(
+                Modifier.align(Alignment.BottomStart)
+                    .offset { IntOffset((frac * w - r).toInt(), 0) }
+                    .size(12.dp).clip(CircleShape).background(YtRed)
+            )
+        }
+    }
+}
 
 /** ভিডিও লোড হওয়া পর্যন্ত: জানা থাকলে থাম্বনেইল, তার ওপর shimmer ও লোডিং রিং */
 @Composable
@@ -571,9 +662,7 @@ private fun Details(vm: MainViewModel) {
 // ---------- শুধু অডিও মোডের লেয়ার ----------
 @Composable
 private fun BoxScope.AudioOnlyLayer(vm: MainViewModel) {
-    var drag by remember { mutableStateOf<Float?>(null) }
-    val dur = vm.durationMs
-    val frac = drag ?: if (dur > 0) (vm.positionMs.toFloat() / dur).coerceIn(0f, 1f) else 0f
+    val canPrev = remember(vm.current?.url, vm.queueIndex, vm.queueItems.size) { vm.canPrev() }
 
     Box(Modifier.matchParentSize().background(Color.Black)) {
         AsyncImage(
@@ -581,10 +670,10 @@ private fun BoxScope.AudioOnlyLayer(vm: MainViewModel) {
             contentScale = ContentScale.Crop, alpha = 0.45f
         )
     }
-    Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 8.dp)) {
+    Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 58.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-            IconButton(onClick = { vm.playPreviousVideo() }) {
-                Icon(Icons.Filled.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(30.dp))
+            IconButton(onClick = { vm.playPreviousVideo() }, enabled = canPrev) {
+                Icon(Icons.Filled.SkipPrevious, null, tint = Color.White.copy(alpha = if (canPrev) 1f else 0.3f), modifier = Modifier.size(30.dp))
             }
             IconButton(onClick = { if (vm.isPlaying) vm.player.pause() else vm.player.play() }) {
                 Icon(if (vm.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, null,
@@ -593,15 +682,6 @@ private fun BoxScope.AudioOnlyLayer(vm: MainViewModel) {
             IconButton(onClick = { vm.playNextVideo() }) {
                 Icon(Icons.Filled.SkipNext, null, tint = Color.White, modifier = Modifier.size(30.dp))
             }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(fmtTime(vm.positionMs / 1000), color = Color.White, fontSize = 11.sp)
-            Slider(
-                value = frac, onValueChange = { drag = it },
-                onValueChangeFinished = { drag?.let { f -> vm.player.seekTo((f * dur).toLong()) }; drag = null },
-                modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
-            )
-            Text(fmtTime(dur / 1000), color = Color.White, fontSize = 11.sp)
         }
     }
 }
@@ -651,7 +731,7 @@ private fun PlayerSettingsSheet(vm: MainViewModel, onDismiss: () -> Unit) {
             add(PTopic(2, Icons.Outlined.Audiotrack, L.t("অডিও ট্র্যাক"),
                 vm.audioTracks.firstOrNull { it.id == vm.audioTrackId }?.label ?: ""))
         add(PTopic(7, Icons.Outlined.Headphones, L.t("শুধু অডিও"), L.t("ভিডিও ছাড়া চলবে, ডেটা বাঁচবে"), toggle = vm.audioOnly))
-        add(PTopic(6, Icons.Outlined.PlayCircle, L.t("অটোপ্লে"), if (vm.autoplay) L.t("চালু") else L.t("বন্ধ")))
+        add(PTopic(6, Icons.Outlined.PlayCircle, L.t("অটোপ্লে"), L.t("ভিডিও শেষে পরের ভিডিও নিজে চলবে"), toggle = vm.autoplay))
         add(PTopic(3, Icons.Outlined.Bedtime, L.t("স্লিপ টাইমার"), sleepLabel(vm.sleepMin)))
         add(PTopic(5, Icons.Outlined.MoreHoriz, L.t("আরও সেটিংস"), "SponsorBlock, Skip silence"))
     }
@@ -670,11 +750,13 @@ private fun PlayerSettingsSheet(vm: MainViewModel, onDismiss: () -> Unit) {
             if (pg == null) {
                 Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
                     topics.forEach { t ->
-                        val canToggle = vm.current != null
+                        val canToggle = t.id != 7 || vm.current != null   // শুধু অডিও-র জন্য ভিডিও লাগে; অটোপ্লে সবসময়
                         Row(
                             Modifier.fillMaxWidth()
                                 .clickable(enabled = t.toggle == null || canToggle) {
-                                    if (t.toggle != null) vm.toggleAudioOnly(!t.toggle) else page = t.id
+                                    if (t.toggle == null) page = t.id
+                                    else if (t.id == 6) vm.applyAutoplay(!t.toggle)
+                                    else vm.toggleAudioOnly(!t.toggle)
                                 }
                                 .padding(horizontal = 16.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -687,7 +769,11 @@ private fun PlayerSettingsSheet(vm: MainViewModel, onDismiss: () -> Unit) {
                                 Text(t.title, fontSize = 16.sp, fontWeight = FontWeight.Medium)
                                 if (t.sub.isNotBlank()) Text(t.sub, color = Sub, fontSize = 12.sp, maxLines = 1)
                             }
-                            if (t.toggle != null) Switch(checked = t.toggle, onCheckedChange = { vm.toggleAudioOnly(it) }, enabled = canToggle)
+                            if (t.toggle != null) Switch(
+                                checked = t.toggle,
+                                onCheckedChange = { if (t.id == 6) vm.applyAutoplay(it) else vm.toggleAudioOnly(it) },
+                                enabled = canToggle
+                            )
                             else Icon(Icons.Filled.ChevronRight, null, tint = Sub)
                         }
                     }
@@ -716,7 +802,6 @@ private fun PlayerSettingsSheet(vm: MainViewModel, onDismiss: () -> Unit) {
                                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
                             }
                         }
-                        6 -> ToggleRow(L.t("অটোপ্লে"), L.t("ভিডিও শেষে পরের ভিডিও নিজে চলবে"), vm.autoplay) { vm.toggleAutoplay() }
                         5 -> {
                             ToggleRow("SponsorBlock", L.t("স্পন্সর, ইন্ট্রো, আউট্রো অংশ নিজে বাদ দেয়"), vm.sponsorOn) { vm.toggleSponsor(it) }
                             ToggleRow(L.t("নীরবতা বাদ (Skip Silence)"), L.t("কথার ফাঁকের নীরব অংশ বাদ যাবে"), vm.skipSilence) {
@@ -812,7 +897,17 @@ private fun QueueSheet(vm: MainViewModel, onDismiss: () -> Unit) {
 fun rememberSheetMaxHeight(): androidx.compose.ui.unit.Dp {
     val density = LocalDensity.current
     val view = LocalView.current
-    val statusPx = WindowInsets.statusBars.getTop(density)
+    // decorFitsSystemWindows = true হলে Compose ইনসেট ০ আসে (ডেকর খেয়ে ফেলে) — তখন রুট ইনসেট/রিসোর্স থেকে আসল মাপ নেওয়া হয়,
+    // নইলে শিট স্ট্যাটাস বারের সমান ওপরে উঠে প্লেয়ারের নিচের অংশ ঢেকে দেয়
+    val statusPx = maxOf(
+        WindowInsets.statusBars.getTop(density),
+        androidx.core.view.ViewCompat.getRootWindowInsets(view)
+            ?.getInsets(WindowInsetsCompat.Type.statusBars())?.top ?: 0,
+        run {
+            val id = view.resources.getIdentifier("status_bar_height", "dimen", "android")
+            if (id > 0) view.resources.getDimensionPixelSize(id) else 0
+        }
+    )
     val w = view.rootView.width.toFloat()
     val h = view.rootView.height.toFloat()
     return with(density) { (h - statusPx - w * 9f / 16f).toDp() - 28.dp }.coerceAtLeast(240.dp)   // ২৮dp = শিটের হ্যান্ডেল

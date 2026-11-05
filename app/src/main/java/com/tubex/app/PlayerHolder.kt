@@ -29,7 +29,7 @@ private class NavPlayer(p: Player) : ForwardingPlayer(p) {
         val pr = nav?.canPrev() == true
         return super.getAvailableCommands().buildUpon()
             .addIf(Player.COMMAND_SEEK_TO_NEXT, n).addIf(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM, n)
-            .addIf(Player.COMMAND_SEEK_TO_PREVIOUS, true).addIf(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM, pr)
+            .addIf(Player.COMMAND_SEEK_TO_PREVIOUS, pr).addIf(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM, pr)
             .build()
     }
     override fun isCommandAvailable(command: Int) = availableCommands.contains(command)
