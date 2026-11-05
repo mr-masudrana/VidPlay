@@ -324,7 +324,7 @@ private fun SettingsPage(vm: MainViewModel, page: Int) {
         // ---------- নোটিফিকেশন ----------
         if (page == 6) SectionCard(Icons.Outlined.Notifications, L.t("নতুন ভিডিওর নোটিফিকেশন")) {
             SwitchRow(L.t("সাবস্ক্রাইব করা চ্যানেল"), L.t("ব্যাকগ্রাউন্ডে মাঝে মাঝে চেক করে নোটিফিকেশন দেয়"), vm.notifyOn) { vm.toggleNotify(it) }
-            val hrs = listOf(3, 6, 12, 24)
+            val hrs = listOf(1, 3, 6, 12, 24)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(hrs.size) { i ->
                     FilterChip(
@@ -477,7 +477,7 @@ private fun AboutSection(vm: MainViewModel) {
 
         SwitchRow(
             L.t("আপডেটের নোটিফিকেশন"),
-            L.t("নতুন ভার্সন এলে নোটিফিকেশন পাবেন (প্রতি ১২ ঘণ্টায় চেক)"),
+            L.t("নতুন ভার্সন এলে নোটিফিকেশন ও অ্যাপে পপআপ পাবেন (প্রতি ২৪ ঘণ্টায় চেক)"),
             vm.updateNotifyOn
         ) { vm.toggleUpdateNotify(it) }
 

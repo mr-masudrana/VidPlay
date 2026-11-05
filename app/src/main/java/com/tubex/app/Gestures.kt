@@ -7,13 +7,23 @@ import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.FastForward
+import androidx.compose.material.icons.rounded.FastRewind
+import androidx.compose.material.icons.rounded.LightMode
+import androidx.compose.material.icons.rounded.VolumeOff
+import androidx.compose.material.icons.rounded.VolumeUp
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.media3.common.Player
 import androidx.media3.ui.PlayerView
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-/** চেপে ধরে থাকলে ২x স্পিডের HUD লেখা (ছাড়া পর্যন্ত থাকে) */
-const val HUD_2X = "⏩ 2x"
+/** জেসচার HUD: আইকন + লেখা */
+data class Hud(val text: String, val icon: ImageVector? = null)
+
+/** চেপে ধরে থাকলে ২x স্পিডের HUD (ছাড়া পর্যন্ত থাকে) */
+val HUD_2X = Hud("2x", Icons.Rounded.FastForward)
 
 /**
  * প্লেয়ারের উপর জেসচার:
@@ -35,7 +45,7 @@ class PlayerGestures(
     private val onMinimize: () -> Unit,
     private val onPull: (Float) -> Unit,        // পোর্ট্রেটে নিচে টানার অগ্রগতি ০..১ (লাইভ)
     private val onPullCancel: () -> Unit,       // থ্রেশহোল্ডের আগে ছেড়ে দিলে
-    private val onHud: (String?) -> Unit
+    private val onHud: (Hud?) -> Unit
 ) : View.OnTouchListener {
 
     private val audio = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -67,7 +77,7 @@ class PlayerGestures(
         runSide = side; runCount = count; lastSeekTime = t
         seekBy(side * 10_000L)
         val sec = count * 10
-        onHud(if (side > 0) "⏩ +" + sec + L.t(" সে") else "⏪ -" + sec + L.t(" সে"))
+        onHud(if (side > 0) Hud("+" + sec + L.t(" সে"), Icons.Rounded.FastForward) else Hud("-" + sec + L.t(" সে"), Icons.Rounded.FastRewind))
         clearHudLater()
     }
 
@@ -138,20 +148,20 @@ class PlayerGestures(
                     val dur = player.duration
                     seekTarget = (startPos + delta).coerceIn(0L, if (dur > 0) dur else Long.MAX_VALUE)
                     val sec = (seekTarget - startPos) / 1000
-                    onHud((if (sec >= 0) "⏩ +" else "⏪ ") + sec + L.t(" সে"))
+                    onHud(Hud((if (sec >= 0) "+" else "") + sec + L.t(" সে"), if (sec >= 0) Icons.Rounded.FastForward else Icons.Rounded.FastRewind))
                 }
                 2 -> {
                     val v = (startValue + dy / h).coerceIn(0.02f, 1f)
                     ctx.findActivity()?.window?.let { w ->
                         val lp = w.attributes; lp.screenBrightness = v; w.attributes = lp
                     }
-                    onHud("🔆 ${(v * 100).roundToInt()}%")
+                    onHud(Hud("${(v * 100).roundToInt()}%", Icons.Rounded.LightMode))
                 }
                 3 -> {
                     val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
                     val v = (startValue + dy / h).coerceIn(0f, 1f)
                     audio.setStreamVolume(AudioManager.STREAM_MUSIC, (v * max).roundToInt().coerceIn(0, max), 0)
-                    onHud("🔊 ${(v * 100).roundToInt()}%")
+                    onHud(Hud("${(v * 100).roundToInt()}%", if (v <= 0f) Icons.Rounded.VolumeOff else Icons.Rounded.VolumeUp))
                 }
             }
             return true

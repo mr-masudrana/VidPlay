@@ -8,12 +8,14 @@ import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.util.Rational
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -53,11 +55,27 @@ class MainActivity : ComponentActivity() {
             .also { f -> f.addListener({ controller = runCatching { f.get() }.getOrNull() }, mainExecutor) }
 
         val coldStart = savedInstanceState == null
+        if (coldStart) vm.checkUpdatePopup()
         setContent {
+            // ভিডিও চলার সময় স্ক্রিন জাগিয়ে রাখা (অডিও-অনলি মোডে স্ক্রিন বন্ধ হতে দেওয়া হয়)
+            val keepOn = vm.isPlaying && !vm.audioArt
+            DisposableEffect(keepOn) {
+                if (keepOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                onDispose { window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+            }
+
             YtTheme(vm.themeIndex, vm.themeAuto, vm.accentColor) {
                 var showSplash by rememberSaveable { mutableStateOf(coldStart) }
                 Box(Modifier.fillMaxSize()) {
                     YtApp(vm)
+                    vm.updatePopup?.let { u ->
+                        UpdateDialog(
+                            u,
+                            onDownload = { Updater.open(this@MainActivity, u.apkUrl ?: u.pageUrl); vm.dismissUpdatePopup() },
+                            onLater = { vm.dismissUpdatePopup() }
+                        )
+                    }
                     if (showSplash) SplashOverlay { showSplash = false }
                 }
             }

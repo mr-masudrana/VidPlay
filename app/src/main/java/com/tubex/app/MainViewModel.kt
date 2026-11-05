@@ -25,7 +25,6 @@ import com.google.android.gms.cast.framework.CastSession
 import com.google.android.gms.cast.framework.SessionManagerListener
 import com.google.android.gms.cast.framework.media.RemoteMediaClient
 import com.google.android.gms.common.images.WebImage
-import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
@@ -454,6 +453,52 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         loading = false
     }
 
+    // ---------- সাবস্ক্রিপশন: পুল-টু-রিফ্রেশ ও চ্যানেল ফিল্টার ----------
+    var subsRefreshing by mutableStateOf(false); private set
+    var subsFilter by mutableStateOf<String?>(null); private set            // নির্বাচিত চ্যানেলের URL (null = সব)
+    var subsFilterVideos by mutableStateOf<List<VideoItem>>(emptyList()); private set
+    var subsFilterLoading by mutableStateOf(false); private set
+    private var subsFilterJob: Job? = null
+
+    /** উপর থেকে টানলে: ফিড (এবং ফিল্টার চালু থাকলে সেই চ্যানেলও) নতুন করে লোড */
+    fun refreshSubs() {
+        if (subsRefreshing) return
+        subsRefreshing = true
+        val feedJob = loadSubsFeed(true)
+        val f = subsFilter
+        val filterJob = if (f != null) loadSubsFilter(f) else null
+        viewModelScope.launch {
+            feedJob.join(); filterJob?.join()
+            subsRefreshing = false
+        }
+    }
+
+    /** চ্যানেল লোগোতে ট্যাপ: সেই চ্যানেলের ভিডিও দেখায়; একই লোগোতে আবার ট্যাপ করলে ফিল্টার বন্ধ */
+    fun selectSubsChannel(url: String?) {
+        if (url == null || url == subsFilter) {
+            subsFilterJob?.cancel()
+            subsFilter = null; subsFilterVideos = emptyList(); subsFilterLoading = false
+            return
+        }
+        subsFilter = url
+        subsFilterVideos = subsFeed.filter { it.channelUrl == url }     // ফিডে যা আছে সাথে সাথে
+        loadSubsFilter(url)
+    }
+
+    private fun loadSubsFilter(url: String): Job {
+        subsFilterJob?.cancel()
+        subsFilterLoading = true
+        val job = viewModelScope.launch {
+            val vids = runCatching { filterBlocked(YtRepository.channel(url).videos) }.getOrNull()
+            if (subsFilter == url) {
+                if (!vids.isNullOrEmpty()) subsFilterVideos = vids
+                subsFilterLoading = false
+            }
+        }
+        subsFilterJob = job
+        return job
+    }
+
     // ---------- প্লেব্যাক ----------
     fun play(url: String) { clearQueue(); startPlay(url) }
 
@@ -838,9 +883,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun removeBlock(entry: String) = viewModelScope.launch { dao.removeBlock(entry) }
 
     // ---------- নতুন ভিডিওর নোটিফিকেশন ও DeArrow ----------
+    /** অ্যাপ খোলার সময় নতুন ভার্সন থাকলে পপআপ (প্রতি ভার্সনে একবার) */
+    var updatePopup by mutableStateOf<UpdateInfo?>(null); private set
+    fun checkUpdatePopup() {
+        if (!Updater.configured || !prefs.updateNotify) return
+        viewModelScope.launch {
+            val info = Updater.fetchLatest() ?: return@launch
+            if (Updater.hasUpdate(info) && prefs.lastPopupUpdate != info.version) updatePopup = info
+        }
+    }
+    fun dismissUpdatePopup() {
+        updatePopup?.let { prefs.lastPopupUpdate = it.version }
+        updatePopup = null
+    }
+
     fun toggleUpdateNotify(v: Boolean) {
         updateNotifyOn = v; prefs.updateNotify = v
-        UpdateScheduler.apply(ctx, v)
+        UpdateScheduler.apply(ctx, v, replace = true)
     }
     fun toggleNotify(v: Boolean) {
         notifyOn = v; prefs.notifyEnabled = v
@@ -946,8 +1005,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setPull(p: Float) { pullJob?.cancel(); playerPull = p }
     fun cancelPull() {
         pullJob?.cancel()
-        if (playerPull <= 0f) return
-        pullJob = viewModelScope.launch { animate(playerPull, 0f, animationSpec = tween(180)) { x, _ -> playerPull = x } }
+        val from = playerPull
+        if (from <= 0f) return
+        // viewModelScope-এ MonotonicFrameClock নেই, তাই Compose animate() নয়; সাধারণ coroutine লুপ (~১৮০ms)
+        pullJob = viewModelScope.launch {
+            val steps = 11
+            for (i in 1..steps) {
+                delay(16)
+                val t = i / steps.toFloat()
+                playerPull = from * (1f - t * t * (3f - 2f * t))   // smoothstep
+            }
+            playerPull = 0f
+        }
     }
     /** প্লেয়ার পেজ এখন পর্দায় খোলা আছে কিনা; থাকলে ব্যাক সবার আগে প্লেয়ারকে মিনিমাইজ করবে */
     val playerShown: Boolean get() = expanded && (active || loadingNew)

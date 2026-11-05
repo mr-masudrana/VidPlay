@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,6 +60,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 // ---------- সাবস্ক্রিপশন ট্যাব ----------
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SubsTab(vm: MainViewModel) {
     val subs by vm.subs.collectAsState()
@@ -68,28 +70,41 @@ fun SubsTab(vm: MainViewModel) {
         Box(Modifier.fillMaxSize(), Alignment.Center) { Text(L.t("এখনো কোনো চ্যানেল সাবস্ক্রাইব করেননি"), color = Sub) }
         return
     }
-    LazyColumn {
-        item {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = { vm.loadSubsFeed(true) }) { Text(L.t("রিফ্রেশ")) }
-            }
-        }
-        item {
-            LazyRow(contentPadding = PaddingValues(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(subs) { s ->
-                    Column(
-                        Modifier.width(72.dp).clickable { vm.openChannel(s.url) },
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Avatar(s.avatar, s.name, 56.dp)
-                        Text(s.name, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(top = 4.dp))
+    // আনসাবস্ক্রাইব করা চ্যানেল ফিল্টারে থাকলে সেটা ধরা হয় না
+    val selected = vm.subsFilter?.takeIf { f -> subs.any { it.url == f } }
+    val videos = if (selected != null) vm.subsFilterVideos else vm.subsFeed
+
+    PullToRefreshBox(isRefreshing = vm.subsRefreshing, onRefresh = { vm.refreshSubs() }, modifier = Modifier.fillMaxSize()) {
+        LazyColumn(Modifier.fillMaxSize()) {
+            item {
+                LazyRow(contentPadding = PaddingValues(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(subs) { s ->
+                        val on = s.url == selected
+                        Column(
+                            Modifier.width(72.dp).clickable { vm.selectSubsChannel(s.url) },
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Box(
+                                Modifier.size(62.dp).then(if (on) Modifier.border(2.5.dp, YtRed, CircleShape) else Modifier),
+                                Alignment.Center
+                            ) { Avatar(s.avatar, s.name, 56.dp) }
+                            Text(
+                                s.name, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
                     }
                 }
             }
+            if (selected != null) {
+                if (vm.subsFilterLoading && videos.isEmpty()) item { VideoListSkeleton(3) }
+                else if (videos.isEmpty()) item {
+                    Text(L.t("কোনো ভিডিও পাওয়া যায়নি"), color = Sub, modifier = Modifier.padding(16.dp))
+                }
+            } else if (vm.loading && vm.subsFeed.isEmpty()) item { VideoListSkeleton(3) }
+            items(videos) { v -> VideoCard(v, onChannel = { vm.openChannel(v.channelUrl) }) { vm.play(v.url) } }
         }
-        if (vm.loading && vm.subsFeed.isEmpty()) item { VideoListSkeleton(3) }
-        items(vm.subsFeed) { v -> VideoCard(v, onChannel = { vm.openChannel(v.channelUrl) }) { vm.play(v.url) } }
     }
 }
 

@@ -70,6 +70,16 @@ class Prefs(ctx: Context) {
         get() = sp.getString("lastNotifiedUpdate", "") ?: ""
         set(v) { sp.edit().putString("lastNotifiedUpdate", v).apply() }
 
+    /** যে ভার্সনের জন্য অ্যাপে পপআপ দেখানো হয়েছে (একই ভার্সনে বারবার নয়) */
+    var lastPopupUpdate: String
+        get() = sp.getString("lastPopupUpdate", "") ?: ""
+        set(v) { sp.edit().putString("lastPopupUpdate", v).apply() }
+
+    /** আপডেট-চেক সিডিউলের সংস্করণ: 1 = ২৪ ঘণ্টা (পুরনো ১২ ঘণ্টার সিডিউল একবার বদলাতে) */
+    var updateSchedVersion: Int
+        get() = sp.getInt("updateSchedVersion", 0)
+        set(v) { sp.edit().putInt("updateSchedVersion", v).apply() }
+
     var notifyHours: Int
         get() = sp.getInt("notifyHours", 6)
         set(v) { sp.edit().putInt("notifyHours", v).apply() }

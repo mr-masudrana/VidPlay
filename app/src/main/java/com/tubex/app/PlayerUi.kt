@@ -199,7 +199,7 @@ private fun PlayerBox(
     var controls by remember { mutableStateOf(false) }   // কন্ট্রোলার দেখা গেলে তবেই ওভারলে দেখাবে
     var showSettings by remember { mutableStateOf(false) }
     var showCaptions by remember { mutableStateOf(false) }
-    var hud by remember { mutableStateOf<String?>(null) }
+    var hud by remember { mutableStateOf<Hud?>(null) }
     val sizes = floatArrayOf(0.04f, 0.0533f, 0.07f)
 
     // AndroidView-এর factory একবারই চলে, তাই সর্বশেষ মান রাখার জন্য
@@ -261,12 +261,18 @@ private fun PlayerBox(
 
         // জেসচার HUD (ব্রাইটনেস/ভলিউম/সিক/স্পিড/মিউট): স্ক্রিনের মাঝে উপরে
         hud?.let {
-            Text(
-                it, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp)
+            Row(
+                Modifier.align(Alignment.TopCenter).padding(top = 12.dp)
                     .background(Color(0xB3000000), RoundedCornerShape(50))
-                    .padding(horizontal = 18.dp, vertical = 8.dp)
-            )
+                    .padding(horizontal = 18.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                it.icon?.let { ic ->
+                    Icon(ic, null, tint = Color.White, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(it.text, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            }
         }
 
         // Chromecast কন্ট্রোল
@@ -276,7 +282,9 @@ private fun PlayerBox(
                     .background(Color(0xCC000000), RoundedCornerShape(24.dp)).padding(start = 14.dp, end = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("📺 ${vm.castName}", color = Color.White, fontSize = 13.sp)
+                Icon(Icons.Rounded.CastConnected, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(vm.castName ?: "", color = Color.White, fontSize = 13.sp)
                 IconButton(onClick = { vm.castToggle() }) {
                     Icon(if (vm.castPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, null, tint = Color.White)
                 }
@@ -303,7 +311,7 @@ private fun PlayerBox(
                 Spacer(Modifier.width(8.dp))
                 PlayerIconButton(if (vm.muted) Icons.Rounded.VolumeOff else Icons.Rounded.VolumeUp) {
                     vm.toggleMute()
-                    hud = if (vm.muted) "🔇 " + L.t("মিউট") else "🔊 " + L.t("আনমিউট")
+                    hud = if (vm.muted) Hud(L.t("মিউট"), Icons.Rounded.VolumeOff) else Hud(L.t("আনমিউট"), Icons.Rounded.VolumeUp)
                 }
                 Spacer(Modifier.width(8.dp))
                 PlayerIconButton(Icons.Rounded.Settings) { showSettings = true }
@@ -320,7 +328,7 @@ private fun PlayerBox(
                     Icons.Rounded.AspectRatio, tint = if (vm.resizeMode != 0) YtRed else Color.White
                 ) {
                     vm.cycleResize()
-                    hud = listOf(L.t("ফিট"), L.t("জুম (ক্রপ)"), L.t("ফুল (স্ট্রেচ)"))[vm.resizeMode]
+                    hud = Hud(listOf(L.t("ফিট"), L.t("জুম (ক্রপ)"), L.t("ফুল (স্ট্রেচ)"))[vm.resizeMode], Icons.Rounded.AspectRatio)
                 }
                 PlayerIconButton(if (landscape) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen) { onFullscreen() }
             }
@@ -620,7 +628,10 @@ private fun ToggleRow(title: String, subtitle: String, checked: Boolean, enabled
     }
 }
 
-private class PTopic(val id: Int, val icon: androidx.compose.ui.graphics.vector.ImageVector, val title: String, val sub: String)
+private class PTopic(
+    val id: Int, val icon: androidx.compose.ui.graphics.vector.ImageVector, val title: String, val sub: String,
+    val toggle: Boolean? = null          // null = পেজে যাওয়ার সারি; নইলে সরাসরি অন/অফ সুইচ
+)
 
 /** প্লেয়ার সেটিংস: প্রথমে শুধু টপিকের তালিকা; টপিকে ট্যাপ করলে সেই টপিকের অপশন */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -631,7 +642,6 @@ private fun PlayerSettingsSheet(vm: MainViewModel, onDismiss: () -> Unit) {
     BackHandler(enabled = page != null) { page = null }
 
     fun sleepLabel(m: Int) = when (m) { 0 -> L.t("বন্ধ"); -1 -> L.t("ভিডিও শেষে"); else -> L.f("{0} মি", m) }
-    val repeatLabels = listOf(L.t("বন্ধ"), L.t("কিউ"), L.t("একটি ভিডিও"))
 
     val topics = buildList {
         add(PTopic(0, Icons.Outlined.Speed, L.t("প্লেব্যাক গতি"), "${vm.speed}x"))
@@ -640,11 +650,10 @@ private fun PlayerSettingsSheet(vm: MainViewModel, onDismiss: () -> Unit) {
         if (vm.current != null && vm.audioTracks.size > 1)
             add(PTopic(2, Icons.Outlined.Audiotrack, L.t("অডিও ট্র্যাক"),
                 vm.audioTracks.firstOrNull { it.id == vm.audioTrackId }?.label ?: ""))
+        add(PTopic(7, Icons.Outlined.Headphones, L.t("শুধু অডিও"), L.t("ভিডিও ছাড়া চলবে, ডেটা বাঁচবে"), toggle = vm.audioOnly))
         add(PTopic(6, Icons.Outlined.PlayCircle, L.t("অটোপ্লে"), if (vm.autoplay) L.t("চালু") else L.t("বন্ধ")))
         add(PTopic(3, Icons.Outlined.Bedtime, L.t("স্লিপ টাইমার"), sleepLabel(vm.sleepMin)))
-        add(PTopic(4, Icons.Outlined.Repeat, L.t("রিপিট ও শাফল"),
-            repeatLabels[vm.repeat.coerceIn(0, 2)] + if (vm.shuffle) " • " + L.t("শাফল") else ""))
-        add(PTopic(5, Icons.Outlined.Headphones, L.t("অডিও সেটিং"), L.t("শুধু অডিও, নীরবতা বাদ")))
+        add(PTopic(5, Icons.Outlined.MoreHoriz, L.t("আরও সেটিংস"), "SponsorBlock, Skip silence"))
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = state, containerColor = Chip) {
@@ -661,8 +670,13 @@ private fun PlayerSettingsSheet(vm: MainViewModel, onDismiss: () -> Unit) {
             if (pg == null) {
                 Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
                     topics.forEach { t ->
+                        val canToggle = vm.current != null
                         Row(
-                            Modifier.fillMaxWidth().clickable { page = t.id }.padding(horizontal = 16.dp, vertical = 12.dp),
+                            Modifier.fillMaxWidth()
+                                .clickable(enabled = t.toggle == null || canToggle) {
+                                    if (t.toggle != null) vm.toggleAudioOnly(!t.toggle) else page = t.id
+                                }
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Box(Modifier.size(40.dp).clip(CircleShape).background(Bg.copy(alpha = 0.6f)), Alignment.Center) {
@@ -673,7 +687,8 @@ private fun PlayerSettingsSheet(vm: MainViewModel, onDismiss: () -> Unit) {
                                 Text(t.title, fontSize = 16.sp, fontWeight = FontWeight.Medium)
                                 if (t.sub.isNotBlank()) Text(t.sub, color = Sub, fontSize = 12.sp, maxLines = 1)
                             }
-                            Icon(Icons.Filled.ChevronRight, null, tint = Sub)
+                            if (t.toggle != null) Switch(checked = t.toggle, onCheckedChange = { vm.toggleAudioOnly(it) }, enabled = canToggle)
+                            else Icon(Icons.Filled.ChevronRight, null, tint = Sub)
                         }
                     }
                 }
@@ -701,15 +716,9 @@ private fun PlayerSettingsSheet(vm: MainViewModel, onDismiss: () -> Unit) {
                                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
                             }
                         }
-                        4 -> {
-                            OptionRow(L.t("রিপিট"), listOf(0, 1, 2), vm.repeat, { repeatLabels[it] }) { vm.chooseRepeat(it) }
-                            ToggleRow(L.t("শাফল"), L.t("কিউ থেকে এলোমেলো ভিডিও চলবে"), vm.shuffle) { vm.toggleShuffle(it) }
-                        }
                         6 -> ToggleRow(L.t("অটোপ্লে"), L.t("ভিডিও শেষে পরের ভিডিও নিজে চলবে"), vm.autoplay) { vm.toggleAutoplay() }
                         5 -> {
-                            ToggleRow(L.t("শুধু অডিও"), L.t("ভিডিও ছাড়া চলবে, ডেটা বাঁচবে"), vm.audioOnly, enabled = vm.current != null) {
-                                vm.toggleAudioOnly(it)
-                            }
+                            ToggleRow("SponsorBlock", L.t("স্পন্সর, ইন্ট্রো, আউট্রো অংশ নিজে বাদ দেয়"), vm.sponsorOn) { vm.toggleSponsor(it) }
                             ToggleRow(L.t("নীরবতা বাদ (Skip Silence)"), L.t("কথার ফাঁকের নীরব অংশ বাদ যাবে"), vm.skipSilence) {
                                 vm.toggleSkipSilence(it)
                             }
@@ -809,6 +818,25 @@ fun rememberSheetMaxHeight(): androidx.compose.ui.unit.Dp {
     return with(density) { (h - statusPx - w * 9f / 16f).toDp() - 28.dp }.coerceAtLeast(240.dp)   // ২৮dp = শিটের হ্যান্ডেল
 }
 
+/** বিবরণ/মন্তব্য শিট: হ্যান্ডেল ঠিক ২৮dp ও নিজস্ব ইনসেট শূন্য, যাতে শিটের মাথা ঠিক প্লেয়ারের নিচে থামে */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PlayerSheet(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss, containerColor = Chip,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        scrimColor = Color.Transparent,                       // প্লেয়ার পরিষ্কার দেখা যায়
+        contentWindowInsets = { WindowInsets(0) },            // নিজস্ব ইনসেট বন্ধ
+        dragHandle = {                                        // ঠিক ২৮dp (12 + 4 + 12)
+            Box(
+                Modifier.padding(vertical = 12.dp).size(32.dp, 4.dp)
+                    .background(Sub.copy(alpha = 0.4f), RoundedCornerShape(2.dp))
+            )
+        },
+        content = content
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CommentsSheet(vm: MainViewModel, onDismiss: () -> Unit) {
@@ -825,11 +853,8 @@ private fun CommentsSheet(vm: MainViewModel, onDismiss: () -> Unit) {
     }
 
     val maxH = rememberSheetMaxHeight()
-    ModalBottomSheet(
-        onDismissRequest = onDismiss, containerColor = Chip,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        scrimColor = Color.Transparent            // প্লেয়ার পরিষ্কার দেখা যায়
-    ) {
+    val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    PlayerSheet(onDismiss) {
         Column(Modifier.fillMaxWidth().height(maxH)) {
             Text(L.t("মন্তব্য") + if (vm.commentsTotal > 0) "  " + fmtCount(vm.commentsTotal.toLong()) else "",
                 fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.padding(16.dp, 0.dp, 16.dp, 0.dp))
@@ -840,7 +865,10 @@ private fun CommentsSheet(vm: MainViewModel, onDismiss: () -> Unit) {
                 L.t("লোড হওয়া মন্তব্যের মধ্যে সাজানো হয়েছে"), color = Sub, fontSize = 11.sp,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
             )
-            LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().weight(1f)) {
+            LazyColumn(
+                state = listState, modifier = Modifier.fillMaxWidth().weight(1f),
+                contentPadding = PaddingValues(bottom = navBottom)   // শেষ কমেন্ট নেভ বারের নিচে যাবে না
+            ) {
                 items(sorted.size) { i -> CommentRow(vm, sorted[i], indent = false) }
                 if (vm.commentsLoading || vm.commentsLoadingMore) item { CommentSkeletons(if (sorted.isEmpty()) 5 else 2) }
                 if (sorted.isEmpty() && !vm.commentsLoading) item {
@@ -862,7 +890,11 @@ private fun CommentRow(vm: MainViewModel, c: CommentItem, indent: Boolean) {
                 Text("${c.author} • ${c.date}", color = Sub, fontSize = 12.sp)
                 LinkText(c.text, vm, fontSize = 14.sp, lineHeight = 20.sp, modifier = Modifier.padding(top = 2.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (c.likes.isNotBlank()) Text("👍 ${c.likes}", color = Sub, fontSize = 12.sp)
+                    if (c.likes.isNotBlank()) {
+                        Icon(Icons.Rounded.ThumbUp, null, tint = Sub, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(c.likes, color = Sub, fontSize = 12.sp)
+                    }
                     if (!indent && c.replies != null && c.replyCount != 0) TextButton(
                         onClick = { vm.toggleReplies(c) }, contentPadding = PaddingValues(horizontal = 8.dp)
                     ) {

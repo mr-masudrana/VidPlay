@@ -104,11 +104,11 @@ class UpdateWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
 object UpdateScheduler {
     private const val NAME = "app_update_check"
 
-    fun apply(ctx: Context, enabled: Boolean) {
+    fun apply(ctx: Context, enabled: Boolean, replace: Boolean = false) {
         val wm = WorkManager.getInstance(ctx)
         if (!enabled || !Updater.configured) { wm.cancelUniqueWork(NAME); return }
-        val req = PeriodicWorkRequestBuilder<UpdateWorker>(12, TimeUnit.HOURS)
+        val req = PeriodicWorkRequestBuilder<UpdateWorker>(24, TimeUnit.HOURS)
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).build()
-        wm.enqueueUniquePeriodicWork(NAME, ExistingPeriodicWorkPolicy.KEEP, req)
+        wm.enqueueUniquePeriodicWork(NAME, if (replace) ExistingPeriodicWorkPolicy.UPDATE else ExistingPeriodicWorkPolicy.KEEP, req)
     }
 }

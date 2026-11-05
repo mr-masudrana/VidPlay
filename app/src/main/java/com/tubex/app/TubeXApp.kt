@@ -17,6 +17,7 @@ class TubeXApp : Application() {
         )
         Notif.ensureChannels(this)
         NotifyScheduler.apply(this, p.notifyEnabled, p.notifyHours, replace = false)
-        UpdateScheduler.apply(this, p.updateNotify)
+        UpdateScheduler.apply(this, p.updateNotify, replace = p.updateSchedVersion < 1)   // একবার পুরনো ১২ ঘণ্টা → ২৪ ঘণ্টা
+        p.updateSchedVersion = 1
     }
 }

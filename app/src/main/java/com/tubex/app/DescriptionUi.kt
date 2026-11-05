@@ -5,6 +5,10 @@ import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -102,12 +106,12 @@ fun DescriptionSheet(vm: MainViewModel, info: StreamInfo, onDismiss: () -> Unit)
     }
 
     val maxH = rememberSheetMaxHeight()
-    ModalBottomSheet(
-        onDismissRequest = onDismiss, containerColor = Chip,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        scrimColor = androidx.compose.ui.graphics.Color.Transparent     // প্লেয়ার পরিষ্কার দেখা যায়
-    ) {
-        LazyColumn(Modifier.fillMaxWidth().heightIn(max = maxH)) {
+    val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    PlayerSheet(onDismiss) {
+        LazyColumn(
+            Modifier.fillMaxWidth().heightIn(max = maxH),
+            contentPadding = PaddingValues(bottom = navBottom)
+        ) {
             item {
                 Column(Modifier.padding(horizontal = 16.dp)) {
                     Text(L.t("বিবরণ"), fontWeight = FontWeight.Bold, fontSize = 16.sp)

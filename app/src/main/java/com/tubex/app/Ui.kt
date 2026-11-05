@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -440,6 +441,7 @@ fun HomeScreen(vm: MainViewModel, bars: BarsState, bottomPad: Dp) {
     val density = LocalDensity.current
     val focus = remember { FocusRequester() }
     val listState = rememberLazyListState()
+    val pullState = rememberPullToRefreshState()
     var showFilter by remember { mutableStateOf(false) }
     val statusDp = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val panel = vm.searching && vm.showSuggestions
@@ -450,6 +452,12 @@ fun HomeScreen(vm: MainViewModel, bars: BarsState, bottomPad: Dp) {
     // সার্চ খুললে (সাজেশন প্যানেলসহ) ফোকাস; রেজাল্ট পেজে অন্য ট্যাব থেকে ফিরলে ফোকাস নয়,
     // নইলে ফোকাস পেয়ে সাজেশন প্যানেল খুলে রেজাল্ট পেজের বদলে সার্চ পেজ দেখাত
     LaunchedEffect(vm.searching) { if (vm.searching && vm.showSuggestions) runCatching { focus.requestFocus() } }
+
+    // সার্চ রেজাল্ট ↔ হোম বদলালে (ব্যাকসহ) ফিড নতুন, তাই আগের স্ক্রোল পজিশন নয়
+    LaunchedEffect(vm.isSearchResult) {
+        listState.scrollToItem(0)
+        bars.offset = 0f
+    }
 
     // হোম ট্যাবে আবার ট্যাপ করলে স্মুথভাবে ওপরে
     var seenTick by remember { mutableStateOf(vm.homeTopTick) }
@@ -486,7 +494,9 @@ fun HomeScreen(vm: MainViewModel, bars: BarsState, bottomPad: Dp) {
     val conn = remember(bars) {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                if (bars.headerPx > 0f) bars.offset = (bars.offset + available.y).coerceIn(-bars.headerPx, 0f)
+                // রিফ্রেশের জন্য টানা/ফেরানোর সময় বার নড়বে না
+                val pulling = pullState.distanceFraction > 0f && !listState.canScrollBackward
+                if (!pulling && bars.headerPx > 0f) bars.offset = (bars.offset + available.y).coerceIn(-bars.headerPx, 0f)
                 return Offset.Zero
             }
         }
@@ -499,7 +509,7 @@ fun HomeScreen(vm: MainViewModel, bars: BarsState, bottomPad: Dp) {
     Box(Modifier.fillMaxSize().nestedScroll(conn)) {
         Crossfade(panel, animationSpec = tween(180), label = "search") { isPanel ->
             if (isPanel) Box(Modifier.fillMaxSize().padding(top = statusDp + TopBarH)) { SearchPanel(vm) }
-            else HomeFeed(vm, shown, listState, top = statusDp + headerDp, bottom = bottomPad)
+            else HomeFeed(vm, shown, listState, pullState, top = statusDp + headerDp, bottom = bottomPad)
         }
 
         // টপ বার + ক্যাটাগরি/ফিল্টার: কন্টেন্টের সাথে ওপরে উঠে যায়
@@ -611,8 +621,10 @@ private fun SearchFilterRow(vm: MainViewModel, onOpen: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun HomeFeed(vm: MainViewModel, shown: List<VideoItem>, listState: LazyListState, top: Dp, bottom: Dp) {
-    val pullState = rememberPullToRefreshState()
+private fun HomeFeed(
+    vm: MainViewModel, shown: List<VideoItem>, listState: LazyListState,
+    pullState: PullToRefreshState, top: Dp, bottom: Dp
+) {
     PullToRefreshBox(
         isRefreshing = vm.refreshing, onRefresh = { vm.refreshFeed() }, state = pullState,
         modifier = Modifier.fillMaxSize(),
