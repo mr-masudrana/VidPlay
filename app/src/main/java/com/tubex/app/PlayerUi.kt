@@ -142,7 +142,7 @@ fun PlayerScreen(vm: MainViewModel) {
         onDispose {
             activity?.window?.let { w ->
                 val a = w.attributes
-                a.rotationAnimation = android.view.WindowManager.LayoutParams.ROTATION_ANIMATION_UNSPECIFIED
+                a.rotationAnimation = android.view.WindowManager.LayoutParams.ROTATION_ANIMATION_ROTATE
                 w.attributes = a
             }
             activity?.let {
