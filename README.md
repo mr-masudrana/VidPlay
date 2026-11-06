@@ -14,10 +14,36 @@ Android Studio-তে প্রজেক্ট খুলুন, অথবা Gra
 YouTube ঘন ঘন বদলায়। `app/build.gradle.kts`-এ NewPipeExtractor-এর ভার্সন সর্বশেষ রিলিজে (github.com/TeamNewPipe/NewPipeExtractor/releases) আপডেট করুন।
 
 ## কোডের কাঠামো (`app/src/main/java/com/tubex/app/`)
-| প্যাকেজ | কী আছে |
-|---|---|
-| `core` | `MainActivity`, `TubeXApp`, `MainViewModel`, `Prefs`, `Lang`, আপডেটার, নতুন ভিডিওর নোটিফিকেশন |
-| `player` | প্লেয়ার UI, জেসচার, মিনি/ভাসমান প্লেয়ার, `PlaybackService`, Cast |
-| `ui` | হোম, চ্যানেল, লাইব্রেরি, প্লেলিস্ট, সেটিংস |
-| `data` | Room ডাটাবেস, `YtRepository`, রিকমেন্ডার, ক্যাশ, ব্যাকআপ/ইম্পোর্ট |
-| `download` | ডাউনলোড ইঞ্জিন ও সার্ভিস, মাক্সার, মিডিয়া এক্সপোর্ট |
+
+```
+com.tubex.app
+├── TubeXApp.kt, MainActivity.kt     অ্যাপ এন্ট্রি পয়েন্ট
+├── util/            Lang (বাংলা/ইংরেজি স্ট্রিং), TextUtil, Format (সংখ্যা/সময়/URL ফরম্যাট)
+├── data/
+│   ├── model/       ডোমেইন মডেল (VideoItem, ChannelData, CommentItem …)
+│   ├── local/       Room: AppDb, AppDao, entity/ + Prefs (SharedPreferences)
+│   ├── remote/      YtRepository (NewPipe Extractor), Extras (SponsorBlock/DeArrow), MyDownloader
+│   ├── cache/       AvatarCache, SubsCache
+│   ├── backup/      ProfileBackup, NewPipeImport
+│   ├── recommend/   Recommender, Blocks
+│   └── search/      SearchFilter
+├── viewmodel/       MainViewModel, UiModels
+├── ui/
+│   ├── theme/       রং, Palette, YtTheme
+│   ├── components/  VideoCard, Avatars, Skeleton (পুনঃব্যবহারযোগ্য কম্পোনেন্ট)
+│   ├── navigation/  PredictiveBack
+│   ├── main/        YtApp, MainScaffold, BackPreviews
+│   ├── library/     LibraryScreen, SubsTab, HistoryFavorites, PlaylistsSection, DownloadsSection, LibraryComponents
+│   ├── settings/    SettingsScreen, SettingsPage, AboutSection, SettingsComponents
+│   └── home/ · channel/ · playlist/ · splash/   স্ক্রিন
+├── player/
+│   ├── PlayerHolder.kt
+│   ├── ui/          PlayerScreen, PlayerSheets, PlayerDetails, CommentsSheet, DescriptionSheet, PlayerMorph, MiniPlayer
+│   ├── gesture/     Gestures
+│   └── service/     PlaybackService, CastOptionsProvider
+├── download/        DownloadEngine, DownloadService, Downloads, Muxer, MediaExport
+├── notification/    নতুন ভিডিওর নোটিফিকেশন + ওয়ার্কার
+└── update/          Updater, UpdateDialog
+```
+
+**নির্ভরতার নিয়ম:** `ui` → `viewmodel` → `data`/`download`/`player`। `data` কখনও `ui` বা `viewmodel` ইম্পোর্ট করবে না।

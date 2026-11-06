@@ -1,8 +1,9 @@
 package com.tubex.app.download
 
-import com.tubex.app.core.L
-import com.tubex.app.data.AppDao
-import com.tubex.app.data.DownloadEntity
+import com.tubex.app.data.local.AppDao
+import com.tubex.app.data.local.entity.DownloadEntity
+import com.tubex.app.util.L
+
 import android.content.Context
 import android.os.Environment
 import org.schabi.newpipe.extractor.MediaFormat

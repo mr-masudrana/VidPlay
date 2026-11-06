@@ -21,7 +21,7 @@
 -dontwarn org.openjsse.**
 
 # ---- Chromecast ----
--keep class com.tubex.app.player.CastOptionsProvider { *; }
+-keep class com.tubex.app.player.service.CastOptionsProvider { *; }
 
 # ---- স্ট্যাক ট্রেস পড়ার সুবিধা ----
 -keepattributes SourceFile,LineNumberTable

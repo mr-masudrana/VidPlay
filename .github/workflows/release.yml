@@ -32,7 +32,8 @@ jobs:
             echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
             echo "KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
           else
-            echo "::warning::KEYSTORE_BASE64 সেট নেই — আনসাইনড APK বানানো হবে"
+            echo "::error::KEYSTORE_BASE64 সেট নেই — আনসাইনড APK ইনস্টল হয় না, তাই রিলিজ বন্ধ করা হলো"
+            exit 1
           fi
 
       - name: Unit tests

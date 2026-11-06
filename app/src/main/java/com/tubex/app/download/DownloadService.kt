@@ -1,9 +1,10 @@
 package com.tubex.app.download
 
+import com.tubex.app.MainActivity
 import com.tubex.app.R
-import com.tubex.app.core.L
-import com.tubex.app.core.MainActivity
-import com.tubex.app.core.Notif
+import com.tubex.app.util.L
+import com.tubex.app.notification.Notif
+
 import android.app.Notification
 import android.app.NotificationManager
 import android.app.PendingIntent

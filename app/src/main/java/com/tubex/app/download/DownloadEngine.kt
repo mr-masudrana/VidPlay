@@ -1,11 +1,12 @@
 package com.tubex.app.download
 
-import com.tubex.app.core.L
-import com.tubex.app.core.Prefs
-import com.tubex.app.data.AppDao
-import com.tubex.app.data.AppDb
-import com.tubex.app.data.DownloadEntity
-import com.tubex.app.data.MyDownloader
+import com.tubex.app.data.local.AppDao
+import com.tubex.app.data.local.AppDb
+import com.tubex.app.data.local.Prefs
+import com.tubex.app.data.local.entity.DownloadEntity
+import com.tubex.app.data.remote.MyDownloader
+import com.tubex.app.util.L
+
 import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
@@ -191,6 +192,9 @@ object DownloadEngine {
         }
     }
 
+    /** রিট্রাই করে লাভ নেই এমন ত্রুটি (HTTP 4xx, ফাইল সাইজ অজানা ইত্যাদি) */
+    private class FatalIo(msg: String) : IOException(msg)
+
     private fun finish(from: File, to: File) {
         to.delete()
         if (!from.renameTo(to)) { from.copyTo(to, overwrite = true); from.delete() }
@@ -200,22 +204,24 @@ object DownloadEngine {
     private suspend fun fetch(url: String, file: File, onProgress: suspend (Long, Long) -> Unit) {
         var have = if (file.exists()) file.length() else 0L
         var total = -1L
+        var attempt = 0
         while (total < 0 || have < total) {
             currentCoroutineContext().ensureActive()
             val before = have
             val req = Request.Builder().url(url).header("User-Agent", MyDownloader.USER_AGENT)
                 .header("Range", "bytes=$have-${have + CHUNK - 1}").build()
+            try {
             client.newCall(req).execute().use { resp ->
                 when (resp.code) {
                     416 -> total = have
                     200, 206 -> {
-                        val body = resp.body ?: throw IOException(L.t("খালি উত্তর"))
+                        val body = resp.body ?: throw FatalIo(L.t("খালি উত্তর"))
                         if (resp.code == 200) {          // সার্ভার রেঞ্জ মানেনি: গোড়া থেকে
                             have = 0
                             total = body.contentLength()
                         } else {
                             total = resp.header("Content-Range")?.substringAfter('/')?.toLongOrNull()
-                                ?: throw IOException(L.t("ফাইলের সাইজ জানা যায়নি"))
+                                ?: throw FatalIo(L.t("ফাইলের সাইজ জানা যায়নি"))
                         }
                         FileOutputStream(file, resp.code == 206).use { out ->
                             val src = body.byteStream()
@@ -231,11 +237,21 @@ object DownloadEngine {
                         }
                         if (resp.code == 200 && total < 0) total = have
                     }
-                    else -> throw IOException("HTTP ${resp.code}")
+                    else -> if (resp.code >= 500) throw IOException("HTTP ${resp.code}") else throw FatalIo("HTTP ${resp.code}")
                 }
                 Unit
             }
-            if (have == before && (total < 0 || have < total)) throw IOException(L.t("ডাউনলোড আটকে গেছে"))
+            attempt = 0
+            } catch (e: FatalIo) {
+                throw e
+            } catch (e: IOException) {
+                // নেটওয়ার্ক ব্লিপ: ফাইলে যা আছে সেখান থেকে সর্বোচ্চ ৩ বার আবার চেষ্টা
+                if (++attempt > 3) throw e
+                delay(2000L * attempt)
+                have = if (file.exists()) file.length() else 0L
+                continue
+            }
+            if (have == before && (total < 0 || have < total)) throw FatalIo(L.t("ডাউনলোড আটকে গেছে"))
         }
     }
 }
