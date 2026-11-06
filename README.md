@@ -12,3 +12,12 @@ Android Studio-তে প্রজেক্ট খুলুন, অথবা Gra
 
 ## ভিডিও না চললে
 YouTube ঘন ঘন বদলায়। `app/build.gradle.kts`-এ NewPipeExtractor-এর ভার্সন সর্বশেষ রিলিজে (github.com/TeamNewPipe/NewPipeExtractor/releases) আপডেট করুন।
+
+## কোডের কাঠামো (`app/src/main/java/com/tubex/app/`)
+| প্যাকেজ | কী আছে |
+|---|---|
+| `core` | `MainActivity`, `TubeXApp`, `MainViewModel`, `Prefs`, `Lang`, আপডেটার, নতুন ভিডিওর নোটিফিকেশন |
+| `player` | প্লেয়ার UI, জেসচার, মিনি/ভাসমান প্লেয়ার, `PlaybackService`, Cast |
+| `ui` | হোম, চ্যানেল, লাইব্রেরি, প্লেলিস্ট, সেটিংস |
+| `data` | Room ডাটাবেস, `YtRepository`, রিকমেন্ডার, ক্যাশ, ব্যাকআপ/ইম্পোর্ট |
+| `download` | ডাউনলোড ইঞ্জিন ও সার্ভিস, মাক্সার, মিডিয়া এক্সপোর্ট |

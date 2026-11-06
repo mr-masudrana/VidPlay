@@ -1,0 +1,174 @@
+package com.tubex.app.core
+import android.content.Context
+
+class Prefs(ctx: Context) {
+    private val sp = ctx.getSharedPreferences("tubex", Context.MODE_PRIVATE)
+
+    var theme: Int
+        get() = sp.getInt("theme", 2)
+        set(v) { sp.edit().putInt("theme", v).apply() }
+
+    var sponsorBlock: Boolean
+        get() = sp.getBoolean("sponsorblock", true)
+        set(v) { sp.edit().putBoolean("sponsorblock", v).apply() }
+
+    var ryd: Boolean
+        get() = sp.getBoolean("ryd", true)
+        set(v) { sp.edit().putBoolean("ryd", v).apply() }
+
+    var captionLang: String
+        get() = sp.getString("captionLang", "") ?: ""
+        set(v) { sp.edit().putString("captionLang", v).apply() }
+
+    /** ভিডিও শেষে পরের ভিডিও নিজে চলবে কি না */
+    var autoplay: Boolean
+        get() = sp.getBoolean("autoplay", true)
+        set(v) { sp.edit().putBoolean("autoplay", v).apply() }
+
+    /** একাধিক অডিও ট্র্যাকের ভিডিওতে বাংলা ট্র্যাক থাকলে সেটাই নিজে চলবে */
+    var banglaAudio: Boolean
+        get() = sp.getBoolean("banglaAudio", true)
+        set(v) { sp.edit().putBoolean("banglaAudio", v).apply() }
+
+    /** ফুলস্ক্রিন ভিডিও মাপ: 0 ফিট, 1 জুম (ক্রপ), 2 ফুল (স্ট্রেচ) */
+    var resizeMode: Int
+        get() = sp.getInt("resizeMode", 0)
+        set(v) { sp.edit().putInt("resizeMode", v).apply() }
+
+    var captionSize: Int
+        get() = sp.getInt("captionSize", 1)
+        set(v) { sp.edit().putInt("captionSize", v).apply() }
+
+    var qualityWifi: Int
+        get() = sp.getInt("qualityWifi", 0)
+        set(v) { sp.edit().putInt("qualityWifi", v).apply() }
+
+    var qualityMobile: Int
+        get() = sp.getInt("qualityMobile", 360)
+        set(v) { sp.edit().putInt("qualityMobile", v).apply() }
+
+    var skipSilence: Boolean
+        get() = sp.getBoolean("skipSilence", false)
+        set(v) { sp.edit().putBoolean("skipSilence", v).apply() }
+
+    var audioOnly: Boolean
+        get() = sp.getBoolean("audioOnly", false)
+        set(v) { sp.edit().putBoolean("audioOnly", v).apply() }
+
+    var searchHistory: List<String>
+        get() = (sp.getString("searchHistory", "") ?: "").split("\n").filter { it.isNotBlank() }
+        set(v) { sp.edit().putString("searchHistory", v.joinToString("\n")).apply() }
+
+    // নতুন ভিডিওর নোটিফিকেশন
+    var notifyEnabled: Boolean
+        get() = sp.getBoolean("notifyEnabled", true)
+        set(v) { sp.edit().putBoolean("notifyEnabled", v).apply() }
+
+    /** অ্যাপের নতুন ভার্সন এলে নোটিফিকেশন */
+    var updateNotify: Boolean
+        get() = sp.getBoolean("updateNotify", true)
+        set(v) { sp.edit().putBoolean("updateNotify", v).apply() }
+
+    /** যে ভার্সনের জন্য শেষবার নোটিফিকেশন দেওয়া হয়েছে (একই আপডেটে বারবার নয়) */
+    var lastNotifiedUpdate: String
+        get() = sp.getString("lastNotifiedUpdate", "") ?: ""
+        set(v) { sp.edit().putString("lastNotifiedUpdate", v).apply() }
+
+    /** যে ভার্সনের জন্য অ্যাপে পপআপ দেখানো হয়েছে (একই ভার্সনে বারবার নয়) */
+    var lastPopupUpdate: String
+        get() = sp.getString("lastPopupUpdate", "") ?: ""
+        set(v) { sp.edit().putString("lastPopupUpdate", v).apply() }
+
+    /** আপডেট-চেক সিডিউলের সংস্করণ: 1 = ২৪ ঘণ্টা (পুরনো ১২ ঘণ্টার সিডিউল একবার বদলাতে) */
+    var updateSchedVersion: Int
+        get() = sp.getInt("updateSchedVersion", 0)
+        set(v) { sp.edit().putInt("updateSchedVersion", v).apply() }
+
+    var notifyHours: Int
+        get() = sp.getInt("notifyHours", 6)
+        set(v) { sp.edit().putInt("notifyHours", v).apply() }
+
+    /** ক্রম বজায় রেখে সংরক্ষণ (পুরনোগুলো আগে), যাতে ছাঁটাইয়ে নতুনগুলো বাদ না পড়ে */
+    var seenVideos: List<String>
+        get() {
+            val s = sp.getString("seenVideosOrdered", null)
+            return if (s != null) s.split("\n").filter { it.isNotBlank() }
+            else sp.getStringSet("seenVideos", emptySet())?.toList() ?: emptyList()
+        }
+        set(v) { sp.edit().putString("seenVideosOrdered", v.joinToString("\n")).remove("seenVideos").apply() }
+
+    var baselined: Set<String>
+        get() = sp.getStringSet("baselined", emptySet())?.toSet() ?: emptySet()
+        set(v) { sp.edit().putStringSet("baselined", v).apply() }
+
+    // DeArrow
+    var dearrowTitles: Boolean
+        get() = sp.getBoolean("dearrowTitles", true)
+        set(v) { sp.edit().putBoolean("dearrowTitles", v).apply() }
+
+    var dearrowThumbs: Boolean
+        get() = sp.getBoolean("dearrowThumbs", true)
+        set(v) { sp.edit().putBoolean("dearrowThumbs", v).apply() }
+
+    /** সাবটাইটেলের রঙ: 0 সাদা, 1 হলুদ, 2 সবুজ, 3 নীল */
+    var captionColor: Int
+        get() = sp.getInt("captionColor", 0)
+        set(v) { sp.edit().putInt("captionColor", v).apply() }
+
+    /** ব্যাকগ্রাউন্ড: 0 নেই (আউটলাইন), 1 আধা-স্বচ্ছ, 2 কালো */
+    var captionBg: Int
+        get() = sp.getInt("captionBg", 1)
+        set(v) { sp.edit().putInt("captionBg", v).apply() }
+
+    /** ভাষা: 0 বাংলা, 1 English, 2 সিস্টেম */
+    var lang: Int
+        get() = sp.getInt("lang", 1)
+        set(v) { sp.edit().putInt("lang", v).apply() }
+
+    /** ব্যাক করলে ভাসমান (PiP-এর মতো) মিনি প্লেয়ার; বন্ধ থাকলে নিচের বারে */
+    var floatMini: Boolean
+        get() = sp.getBoolean("floatMini", true)
+        set(v) { sp.edit().putBoolean("floatMini", v).apply() }
+
+    // ---------- নতুন সেটিংস ----------
+    /** সিস্টেম থিম অনুযায়ী অটো লাইট/ডার্ক */
+    var themeAuto: Boolean
+        get() = sp.getBoolean("themeAuto", false)
+        set(v) { sp.edit().putBoolean("themeAuto", v).apply() }
+
+    /** নিজের পছন্দের অ্যাকসেন্ট রঙ (ARGB); 0 = থিমের ডিফল্ট */
+    var accentColor: Int
+        get() = sp.getInt("accentColor", 0)
+        set(v) { sp.edit().putInt("accentColor", v).apply() }
+
+    /** ডেটা সেভার: কোয়ালিটি সর্বোচ্চ 360p, আগাম লোড বন্ধ */
+    var dataSaver: Boolean
+        get() = sp.getBoolean("dataSaver", false)
+        set(v) { sp.edit().putBoolean("dataSaver", v).apply() }
+
+    /** অ্যাপ ব্যাকগ্রাউন্ডে গেলেও প্লে চলবে কি না */
+    var backgroundPlay: Boolean
+        get() = sp.getBoolean("backgroundPlay", true)
+        set(v) { sp.edit().putBoolean("backgroundPlay", v).apply() }
+
+    var pipPlay: Boolean
+        get() = sp.getBoolean("pipPlay", true)
+        set(v) { sp.edit().putBoolean("pipPlay", v).apply() }
+
+    var wifiOnlyDownload: Boolean
+        get() = sp.getBoolean("wifiOnlyDownload", false)
+        set(v) { sp.edit().putBoolean("wifiOnlyDownload", v).apply() }
+
+    /** একসাথে কয়টা ডাউনলোড চলবে (1..3) */
+    var parallelDownloads: Int
+        get() = sp.getInt("parallelDownloads", 1).coerceIn(1, 3)
+        set(v) { sp.edit().putInt("parallelDownloads", v.coerceIn(1, 3)).apply() }
+
+    var saveSearchHistory: Boolean
+        get() = sp.getBoolean("saveSearchHistory", true)
+        set(v) { sp.edit().putBoolean("saveSearchHistory", v).apply() }
+
+    var saveWatchHistory: Boolean
+        get() = sp.getBoolean("saveWatchHistory", true)
+        set(v) { sp.edit().putBoolean("saveWatchHistory", v).apply() }
+}

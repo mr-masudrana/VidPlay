@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- হিস্ট্রি, সাবস্ক্রিপশন ও সেটিংস ক্লাউড ব্যাকআপে যাবে না (অ্যাপের নিজস্ব প্রোফাইল এক্সপোর্ট ব্যবহার করুন) -->
+<full-backup-content>
+    <exclude domain="database" path="." />
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="file" path="." />
+</full-backup-content>

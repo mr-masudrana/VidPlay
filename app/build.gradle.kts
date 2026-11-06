@@ -33,7 +33,7 @@ android {
     // কীস্টোর না থাকলে রিলিজ APK আনসাইনড বানানো হয়।
     val keystorePath: String? = System.getenv("KEYSTORE_PATH")
     signingConfigs {
-        if (keystorePath != null && file(keystorePath).exists()) {
+        if (keystorePath != null && file(keystorePath).let { it.exists() && it.length() > 0 }) {
             create("release") {
                 storeFile = file(keystorePath)
                 storePassword = System.getenv("KEYSTORE_PASSWORD")

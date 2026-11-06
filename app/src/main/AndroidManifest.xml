@@ -11,8 +11,10 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
     <application
-        android:name=".TubeXApp"
+        android:name=".core.TubeXApp"
         android:allowBackup="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:label="@string/app_name"
@@ -22,10 +24,10 @@
 
         <meta-data
             android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
-            android:value="com.tubex.app.CastOptionsProvider" />
+            android:value="com.tubex.app.player.CastOptionsProvider" />
 
         <activity
-            android:name=".MainActivity"
+            android:name=".core.MainActivity"
             android:exported="true"
             android:theme="@style/Theme.TubeX.Starting"
             android:supportsPictureInPicture="true"
@@ -42,6 +44,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="https" />
+                <data android:scheme="http" />
                 <data android:host="youtube.com" />
                 <data android:host="www.youtube.com" />
                 <data android:host="m.youtube.com" />
@@ -67,12 +70,12 @@
         </provider>
 
         <service
-            android:name=".DownloadService"
+            android:name=".download.DownloadService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
         <service
-            android:name=".PlaybackService"
+            android:name=".player.PlaybackService"
             android:exported="true"
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>
