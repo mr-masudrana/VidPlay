@@ -146,6 +146,8 @@ private val EN: Map<String, String> = mapOf(
     "লিংক কপি হয়েছে" to "Link copied",
     "ব্রাউজারে খুলুন" to "Open in browser",
     "অধ্যায়" to "Chapters",
+    "দেখা চালিয়ে যান" to "Continue watching",
+    "আপনার সাম্প্রতিক দেখার সাথে সম্পর্কিত" to "Related to what you watched recently",
     "মন্তব্য" to "Comments",
     "লোড হচ্ছে…" to "Loading…",
     "মন্তব্য নেই বা বন্ধ আছে" to "No comments, or comments are turned off",

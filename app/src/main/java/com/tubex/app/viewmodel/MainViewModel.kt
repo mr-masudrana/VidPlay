@@ -242,10 +242,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var pipY by mutableStateOf(Float.NaN)
 
     // Chromecast
-    var castAvailable by mutableStateOf(false); private set
-    var castName by mutableStateOf<String?>(null); private set
-    var castPlaying by mutableStateOf(false); private set
-    private var castContext: CastContext? = null
+    private val cast = CastController(
+        app, currentInfo = { current }, playerPositionMs = { player.currentPosition },
+        pausePlayer = { player.pause() }, toast = { toast(it) }
+    )
+    val castAvailable get() = cast.available
+    val castName get() = cast.deviceName
+    val castPlaying get() = cast.playing
 
     private var segments: List<Segment> = emptyList()
     private var milestone = 0
@@ -260,21 +263,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val channelName get() = current?.uploaderName ?: ""
 
     private var playerListener: Player.Listener? = null
-    private val castExecutor = Executors.newSingleThreadExecutor()
-    private var castClientRef: RemoteMediaClient? = null
-    private var castCb: RemoteMediaClient.Callback? = null
-
-    private val castListener = object : SessionManagerListener<CastSession> {
-        override fun onSessionStarting(s: CastSession) {}
-        override fun onSessionStarted(s: CastSession, id: String) { onCastConnected(s) }
-        override fun onSessionStartFailed(s: CastSession, e: Int) {}
-        override fun onSessionEnding(s: CastSession) {}
-        override fun onSessionEnded(s: CastSession, e: Int) { castName = null; castPlaying = false }
-        override fun onSessionResuming(s: CastSession, id: String) {}
-        override fun onSessionResumed(s: CastSession, wasSuspended: Boolean) { onCastConnected(s) }
-        override fun onSessionResumeFailed(s: CastSession, e: Int) {}
-        override fun onSessionSuspended(s: CastSession, reason: Int) {}
-    }
 
     init {
         player.skipSilenceEnabled = skipSilence
@@ -341,20 +329,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         playerListener = pl; player.addListener(pl)
         // Chromecast (Google Play Services না থাকলে নীরবে বাদ)
-        runCatching {
-            CastContext.getSharedInstance(app, castExecutor)
-                .addOnSuccessListener { cc ->
-                    castContext = cc; castAvailable = true
-                    cc.sessionManager.addSessionManagerListener(castListener, CastSession::class.java)
-                }
-        }
+        cast.init()
         // প্রতি ০.৫ সেকেন্ডে: SponsorBlock স্কিপ; প্রতি ১০ সেকেন্ডে: হিস্টরি সেভ
         viewModelScope.launch {
             var n = 0
             while (true) {
                 delay(500)
                 if (sleepEnd > 0 && System.currentTimeMillis() >= sleepEnd) {
-                    sleepEnd = 0; sleepMin = 0; player.pause(); castClient()?.pause(); toast(L.t("স্লিপ টাইমার: প্লেব্যাক বন্ধ"))
+                    sleepEnd = 0; sleepMin = 0; player.pause(); cast.pause(); toast(L.t("স্লিপ টাইমার: প্লেব্যাক বন্ধ"))
                 }
                 if (active) { positionMs = player.currentPosition; durationMs = player.duration.coerceAtLeast(0L) }
                 val info = current
@@ -380,9 +362,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     override fun onCleared() {
         playerListener?.let { player.removeListener(it) }
         PlayerHolder.navigator = null
-        castCb?.let { castClientRef?.unregisterCallback(it) }
-        castContext?.sessionManager?.removeSessionManagerListener(castListener, CastSession::class.java)
-        castExecutor.shutdown()
+        cast.release()
         super.onCleared()
     }
 
@@ -443,18 +423,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val interests = dao.interests()
                 val topics = Recommender.top(interests, 8).map { it.first }
                     .filter { it.startsWith("kw:") }.take(3).map { it.removePrefix("kw:") }
-                val pools = coroutineScope {
+                val recentUrl = history.value.firstOrNull()?.url
+                val (pools, relatedPool) = coroutineScope {
+                    // সাম্প্রতিক দেখা ভিডিওর related: ফিডে স্বাভাবিক বিষয়-বদল আনে
+                    val rel = async {
+                        if (recentUrl == null) emptyList<VideoItem>()
+                        else runCatching { YtRepository.related(YtRepository.streamInfo(recentUrl)) }.getOrDefault(emptyList())
+                    }
                     val jobs = listOf(async { runCatching { YtRepository.trending() }.getOrDefault(emptyList()) }) +
                             topics.map { q -> async { runCatching { YtRepository.search(q) }.getOrDefault(emptyList()) } }
-                    jobs.awaitAll()
+                    jobs.awaitAll() to rel.await()
                 }
-                val merged = pools.flatten().distinctBy { it.url }
-                val r = filterBlocked(
+                val merged = (pools.flatten() + relatedPool).distinctBy { it.url }
+                val ranked = filterBlocked(
                     Recommender.rank(
                         merged, interests, dao.watchedUrls().toSet(), history.value,
-                        subs.value.map { it.name.lowercase() }.toSet()
+                        subs.value.map { it.name.lowercase() }.toSet(),
+                        related = relatedPool.map { it.url }.toSet()
                     )
                 )
+                // কম লাইক-অনুপাতের ভিডিও শেষে পাঠানো (সর্বোচ্চ ৪ সেকেন্ড অপেক্ষা; না পেলে যেমন আছে তেমন)
+                val r = if (prefs.ryd) kotlinx.coroutines.withTimeoutOrNull(4_000) { demoteLowEngagement(ranked) } ?: ranked
+                else ranked
                 putFeed("foryou", r)
                 if (r.isNotEmpty() || !silent) feed = r
                 if (feed.isEmpty()) error = L.t("কোনো ভিডিও পাওয়া যায়নি") else error = null
@@ -467,6 +457,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         feedJob = job
         return job
+    }
+
+    /** ফিডের প্রথম ১৬টির লাইক/ডিসলাইক (RYD) এনে কম মানের ভিডিও শেষে নামায় */
+    private suspend fun demoteLowEngagement(list: List<VideoItem>): List<VideoItem> {
+        val gate = kotlinx.coroutines.sync.Semaphore(4)
+        val stats = coroutineScope {
+            list.take(16).map { v ->
+                async {
+                    val id = DeArrow.videoId(v.url) ?: return@async null
+                    gate.withPermit { Extras.ryd(id) }?.let { v.url to it }
+                }
+            }.awaitAll().filterNotNull().toMap()
+        }
+        return Recommender.demoteLowQuality(list, stats)
     }
 
     /** পুল-টু-রিফ্রেশ: বর্তমান ফিড (আপনার জন্য / ক্যাটাগরি / সার্চ) আবার লোড করে */
@@ -750,7 +754,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 loadingNew = false
 
                 related = filterBlocked(YtRepository.related(info))
-                if (castName != null) castLoad(info, start)
+                if (castName != null) cast.load(info, start)
                 writeHistory(info, start)
                 boost(info, 0.5)
                 loadComments(url)
@@ -1093,43 +1097,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         current = null; local = null; expanded = false
     }
 
-    // ---------- Chromecast ----------
-    private fun castClient(): RemoteMediaClient? = castContext?.sessionManager?.currentCastSession?.remoteMediaClient
-
-    private fun onCastConnected(s: CastSession) {
-        castName = s.castDevice?.friendlyName ?: "Cast"
-        val client = s.remoteMediaClient ?: return
-        castCb?.let { castClientRef?.unregisterCallback(it) }
-        val cb = object : RemoteMediaClient.Callback() {
-            override fun onStatusUpdated() { castPlaying = client.isPlaying }
-        }
-        client.registerCallback(cb); castClientRef = client; castCb = cb
-        current?.let { castLoad(it, player.currentPosition) }
-    }
-
-    private fun castLoad(info: StreamInfo, posMs: Long) {
-        val client = castClient() ?: return
-        val stream = YtRepository.castStream(info)
-        if (stream == null) { toast(L.t("এই ভিডিও কাস্ট করা যাবে না")); return }
-        val meta = MediaMetadata(MediaMetadata.MEDIA_TYPE_MOVIE)
-        meta.putString(MediaMetadata.KEY_TITLE, info.name)
-        info.thumbnails.lastOrNull()?.url?.let { meta.addImage(WebImage(Uri.parse(it))) }
-        val mi = MediaInfo.Builder(stream.content)
-            .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
-            .setContentType(stream.format?.mimeType ?: "video/mp4")
-            .setMetadata(meta).build()
-        client.load(
-            MediaLoadRequestData.Builder().setMediaInfo(mi).setAutoplay(true).setCurrentTime(posMs).build()
-        )
-        player.pause()
-    }
-
-    fun showCastChooser(activityCtx: Context) {
-        val sel = castContext?.mergedSelector ?: return
-        MediaRouteChooserDialog(activityCtx).apply { routeSelector = sel }.show()
-    }
-    fun castToggle() { castClient()?.togglePlayback() }
-    fun castStop() { castContext?.sessionManager?.endCurrentSession(true) }
+    // ---------- Chromecast (CastController-এ ডেলিগেট) ----------
+    fun showCastChooser(activityCtx: Context) = cast.showChooser(activityCtx)
+    fun castToggle() = cast.toggle()
+    fun castStop() = cast.stop()
 
     // ---------- হিস্টরি ও রিকমেন্ডেশন ----------
     private fun writeHistory(info: StreamInfo, pos: Long) = viewModelScope.launch {

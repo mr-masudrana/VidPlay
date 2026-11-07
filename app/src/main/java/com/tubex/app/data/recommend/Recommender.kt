@@ -122,7 +122,8 @@ object Recommender {
 
     fun rank(
         videos: List<VideoItem>, interests: List<InterestEntity>, seen: Set<String>,
-        recent: List<HistoryEntity>, subscribed: Set<String>
+        recent: List<HistoryEntity>, subscribed: Set<String>,
+        related: Set<String> = emptySet()
     ): List<VideoItem> {
         val now = System.currentTimeMillis()
         val b = bucket()
@@ -169,6 +170,12 @@ object Recommender {
                 if (bestVal < 1.0) { bestVal = 1.0; bestLabel = L.t("আপনার সাবস্ক্রাইব করা চ্যানেল") }
             }
 
+            // সাম্প্রতিক দেখা ভিডিওর "related" থেকে: স্বাভাবিকভাবে বিষয় বদলের সুযোগ
+            if (v.url in related) {
+                total += 0.8
+                if (bestVal < 0.8) { bestVal = 0.8; bestLabel = L.t("আপনার সাম্প্রতিক দেখার সাথে সম্পর্কিত") }
+            }
+
             // মান ফিল্টার (ফিডের তথ্যে লাইক নেই, তাই ভিউ ও শিরোনামের ধরন দেখা হয়)
             if (v.views in 0..199 && chLower !in subscribed) total -= 1.0
             val letters = v.title.count { it.isLetter() }
@@ -196,5 +203,27 @@ object Recommender {
             if (c < 2) { first.add(item); count[item.channel] = c + 1 } else rest.add(item)
         }
         return first + rest
+    }
+
+    // ---------- এনগেজমেন্ট (লাইক/ডিসলাইক) ফিল্টার ----------
+    /** লাইক অনুপাত; ভোট কম হলে null (সিদ্ধান্ত নেওয়ার মতো তথ্য নেই) */
+    fun likeRatio(likes: Long, dislikes: Long, minVotes: Long = 50): Double? {
+        val total = likes + dislikes
+        return if (total < minVotes) null else likes.toDouble() / total
+    }
+
+    /**
+     * stats: ভিডিও url → (likes, dislikes)। অনুপাত [minRatio]-এর নিচে হলে ভিডিও তালিকার শেষে যায়
+     * (বাদ যায় না); বাকিদের ক্রম অপরিবর্তিত থাকে।
+     */
+    fun demoteLowQuality(
+        videos: List<VideoItem>, stats: Map<String, Pair<Long, Long>>, minRatio: Double = 0.6
+    ): List<VideoItem> {
+        val (bad, good) = videos.partition { v ->
+            val st = stats[v.url] ?: return@partition false
+            val r = likeRatio(st.first, st.second) ?: return@partition false
+            r < minRatio
+        }
+        return good + bad
     }
 }

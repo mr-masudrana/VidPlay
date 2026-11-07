@@ -274,6 +274,9 @@ private fun HomeFeed(
     vm: MainViewModel, shown: List<VideoItem>, listState: LazyListState,
     pullState: PullToRefreshState, top: Dp, bottom: Dp
 ) {
+    val hist by vm.history.collectAsState()
+    val showShelf = vm.chipIndex == 0 && !vm.isSearchResult
+    val resume = remember(hist) { continueWatching(hist) }
     PullToRefreshBox(
         isRefreshing = vm.refreshing, onRefresh = { vm.refreshFeed() }, state = pullState,
         modifier = Modifier.fillMaxSize(),
@@ -292,6 +295,7 @@ private fun HomeFeed(
                 // সার্চ/ক্যাটাগরি বদলালে স্কেলিটন লোডিং
                 item { VideoListSkeleton(3) }
             } else {
+                if (showShelf && resume.isNotEmpty()) item { ContinueWatchingShelf(resume) { vm.play(it) } }
                 vm.error?.let { e -> item { Text(e, color = Sub, modifier = Modifier.padding(16.dp)) } }
                 if (shown.isEmpty() && vm.feed.isNotEmpty()) item {
                     Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {

@@ -6,7 +6,7 @@ plugins {
 
 // ভার্সন: GitHub Release ট্যাগ (যেমন v1.3) থেকে নেওয়া হয়, তাই App info-তে সবসময় রিলিজের ভার্সনই দেখায়।
 // ট্যাগ ছাড়া (লোকাল/ডিবাগ) বিল্ডে নিচের baseVersion ব্যবহার হয় — নতুন রিলিজের আগে এটা বদলে রাখুন।
-val baseVersion = "1.2"
+val baseVersion = "1.3"
 val tagName: String? = if (System.getenv("GITHUB_REF_TYPE") == "tag") System.getenv("GITHUB_REF_NAME") else null
 val appVersion: String = tagName?.removePrefix("v")?.takeIf { Regex("""\d+(\.\d+){0,2}""").matches(it) } ?: baseVersion
 fun versionCodeOf(v: String): Int {

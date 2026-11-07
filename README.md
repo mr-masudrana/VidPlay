@@ -10,6 +10,9 @@ NewPipe Extractor ভিত্তিক YouTube-স্টাইল ভিডি�
 ## লোকালি বিল্ড
 Android Studio-তে প্রজেক্ট খুলুন, অথবা Gradle 8.9 + JDK 17 দিয়ে `gradle assembleDebug`।
 
+## লাইসেন্স
+GPL-3.0 (`LICENSE`) — NewPipe Extractor GPL-3 হওয়ায় এই অ্যাপও GPL-3। গোপনীয়তা: `privacy.md`।
+
 ## ভিডিও না চললে
 YouTube ঘন ঘন বদলায়। `app/build.gradle.kts`-এ NewPipeExtractor-এর ভার্সন সর্বশেষ রিলিজে (github.com/TeamNewPipe/NewPipeExtractor/releases) আপডেট করুন।
 
