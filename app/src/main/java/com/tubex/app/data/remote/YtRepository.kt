@@ -225,8 +225,10 @@ object YtRepository {
                 info.videoStreams.map { it.height })
             .filter { it > 0 }.distinct().sortedDescending()
 
+    // WEB ক্লায়েন্টের স্ট্রিমিং URL (poToken সহ) ব্রাউজারের মতো Origin/Referer আশা করে
     private fun http() = DefaultHttpDataSource.Factory()
         .setUserAgent(MyDownloader.USER_AGENT).setAllowCrossProtocolRedirects(true)
+        .setDefaultRequestProperties(mapOf("Origin" to "https://www.youtube.com", "Referer" to "https://www.youtube.com/"))
 
     // ---------- অডিও ট্র্যাক (ভাষা/ডাব) ----------
     data class AudioTrack(val id: String?, val label: String)

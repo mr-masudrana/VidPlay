@@ -186,6 +186,7 @@ private val EN: Map<String, String> = mapOf(
     "থিম" to "Theme",
     "প্লেব্যাক" to "Playback",
     "স্পন্সর, ইন্ট্রো, আউট্রো অংশ নিজে বাদ দেয়" to "Automatically skips sponsor, intro and outro segments",
+    "YouTube-এর যাচাই টোকেন তৈরি করে; ভিডিও না চললে বা \"বট\" ত্রুটি এলে চালু রাখুন" to "Generates YouTube's integrity token; keep on if videos fail or a \"bot\" error appears",
     "ডিসলাইকের আনুমানিক সংখ্যা দেখায়" to "Shows an estimated dislike count",
     "শুধু অডিও (ডিফল্ট)" to "Audio only (default)",
     "ভিডিও ছাড়া শুধু শব্দ চলবে, ডেটা বাঁচবে" to "Plays sound only, saving data",

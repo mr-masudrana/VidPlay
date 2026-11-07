@@ -152,6 +152,7 @@ internal fun SettingsPage(vm: MainViewModel, page: Int) {
             SwitchRow(L.t("ভাসমান মিনি প্লেয়ার"), L.t("ব্যাক করলে ভিডিও ছোট ভাসমান উইন্ডোতে চলতে থাকবে, টেনে সরানো যায়"), vm.floatingMini) { vm.toggleFloatingMini(it) }
             SwitchRow("Return YouTube Dislike", L.t("ডিসলাইকের আনুমানিক সংখ্যা দেখায়"), vm.rydOn) { vm.toggleRyd(it) }
             SwitchRow("SponsorBlock", L.t("স্পন্সর, ইন্ট্রো, আউট্রো অংশ নিজে বাদ দেয়"), vm.sponsorOn) { vm.toggleSponsor(it) }
+            SwitchRow("PoToken", L.t("YouTube-এর যাচাই টোকেন তৈরি করে; ভিডিও না চললে বা \"বট\" ত্রুটি এলে চালু রাখুন"), vm.poTokenOn) { vm.togglePoToken(it) }
             SwitchRow(L.t("নীরবতা বাদ"), L.t("কথার ফাঁকের নীরব অংশ বাদ যাবে"), vm.skipSilence) { vm.toggleSkipSilence(it) }
         }
 

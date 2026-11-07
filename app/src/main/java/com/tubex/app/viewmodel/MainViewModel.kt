@@ -104,6 +104,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // সেটিংস
     var themeIndex by mutableStateOf(prefs.theme); private set
     var sponsorOn by mutableStateOf(prefs.sponsorBlock); private set
+    var poTokenOn by mutableStateOf(prefs.poToken); private set
     var rydOn by mutableStateOf(prefs.ryd); private set
     var captionSizeIndex by mutableStateOf(prefs.captionSize); private set
     var captionColorIndex by mutableStateOf(prefs.captionColor); private set
@@ -1139,6 +1140,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun toggleSponsor(v: Boolean) {
         sponsorOn = v; prefs.sponsorBlock = v
         if (!v) segments = emptyList() else current?.let { loadSegments(it.id) }
+    }
+    fun togglePoToken(v: Boolean) {
+        poTokenOn = v; prefs.poToken = v
+        com.tubex.app.data.potoken.PoTokenProviderImpl.enabled = v
+        if (!v) com.tubex.app.data.potoken.PoTokenProviderImpl.reset()   // WebView ও মেমরি ছেড়ে দেয়
     }
     fun toggleRyd(v: Boolean) {
         rydOn = v; prefs.ryd = v

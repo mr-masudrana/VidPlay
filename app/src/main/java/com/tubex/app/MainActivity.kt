@@ -48,6 +48,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        // শুধু UI খুললে (ব্যাকগ্রাউন্ড ওয়ার্কারে নয়) poToken আগে থেকে প্রস্তুত রাখি
+        if (savedInstanceState == null) com.tubex.app.data.potoken.PoTokenProviderImpl.prewarm()
 
         if (Build.VERSION.SDK_INT >= 33 && savedInstanceState == null &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED

@@ -14,6 +14,7 @@ Android Studio-তে প্রজেক্ট খুলুন, অথবা Gra
 GPL-3.0 (`LICENSE`) — NewPipe Extractor GPL-3 হওয়ায় এই অ্যাপও GPL-3। গোপনীয়তা: `privacy.md`।
 
 ## ভিডিও না চললে
+প্রথমে সেটিংস-এ **PoToken** সুইচ চালু আছে কি না দেখুন (ডিফল্ট চালু)। এটি YouTube-এর বট-যাচাই পার করতে সাহায্য করে; কাজ করতে ডিভাইসে Android System WebView/Chrome লাগে।
 YouTube ঘন ঘন বদলায়। `app/build.gradle.kts`-এ NewPipeExtractor-এর ভার্সন সর্বশেষ রিলিজে (github.com/TeamNewPipe/NewPipeExtractor/releases) আপডেট করুন।
 
 ## কোডের কাঠামো (`app/src/main/java/com/tubex/app/`)
@@ -26,11 +27,12 @@ com.tubex.app
 │   ├── model/       ডোমেইন মডেল (VideoItem, ChannelData, CommentItem …)
 │   ├── local/       Room: AppDb, AppDao, entity/ + Prefs (SharedPreferences)
 │   ├── remote/      YtRepository (NewPipe Extractor), Extras (SponsorBlock/DeArrow), MyDownloader
-│   ├── cache/       AvatarCache, SubsCache
+│   ├── cache/       AvatarCache, SubsCache, FeedCache, StreamInfoCache
+│   ├── potoken/     PoTokenProviderImpl, PoTokenWebView, JavaScriptUtil (YouTube BotGuard/poToken; assets/po_token.html)
 │   ├── backup/      ProfileBackup, NewPipeImport
 │   ├── recommend/   Recommender, Blocks
 │   └── search/      SearchFilter
-├── viewmodel/       MainViewModel, UiModels
+├── viewmodel/       MainViewModel, CastController, CommentsController, PlaylistsController, PlayQueue, ProfileSettings, UiModels
 ├── ui/
 │   ├── theme/       রং, Palette, YtTheme
 │   ├── components/  VideoCard, Avatars, Skeleton (পুনঃব্যবহারযোগ্য কম্পোনেন্ট)
@@ -44,7 +46,7 @@ com.tubex.app
 │   ├── ui/          PlayerScreen, PlayerSheets, PlayerDetails, CommentsSheet, DescriptionSheet, PlayerMorph, MiniPlayer
 │   ├── gesture/     Gestures
 │   └── service/     PlaybackService, CastOptionsProvider
-├── download/        DownloadEngine, DownloadService, Downloads, Muxer, MediaExport
+├── download/        DownloadEngine, DownloadService, Downloads, Muxer, MediaExport, DownloadExporter
 ├── notification/    নতুন ভিডিওর নোটিফিকেশন + ওয়ার্কার
 └── update/          Updater, UpdateDialog
 ```

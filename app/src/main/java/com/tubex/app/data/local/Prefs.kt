@@ -13,6 +13,11 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("sponsorblock", true)
         set(v) { sp.edit().putBoolean("sponsorblock", v).apply() }
 
+    /** YouTube-এর যাচাই টোকেন (BotGuard poToken): ভিডিও না চলা/"বট" সমস্যা কমায় */
+    var poToken: Boolean
+        get() = sp.getBoolean("potoken", true)
+        set(v) { sp.edit().putBoolean("potoken", v).apply() }
+
     var ryd: Boolean
         get() = sp.getBoolean("ryd", true)
         set(v) { sp.edit().putBoolean("ryd", v).apply() }

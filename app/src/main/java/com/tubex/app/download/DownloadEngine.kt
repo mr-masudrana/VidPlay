@@ -209,6 +209,7 @@ object DownloadEngine {
             currentCoroutineContext().ensureActive()
             val before = have
             val req = Request.Builder().url(url).header("User-Agent", MyDownloader.USER_AGENT)
+                .header("Origin", "https://www.youtube.com").header("Referer", "https://www.youtube.com/")
                 .header("Range", "bytes=$have-${have + CHUNK - 1}").build()
             try {
             client.newCall(req).execute().use { resp ->

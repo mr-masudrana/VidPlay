@@ -25,3 +25,8 @@
 
 # ---- স্ট্যাক ট্রেস পড়ার সুবিধা ----
 -keepattributes SourceFile,LineNumberTable
+
+# ---- poToken (WebView JavascriptInterface মেথড রিনেম/মুছে গেলে JS থেকে ডাকা যাবে না) ----
+-keepclassmembers class com.tubex.app.data.potoken.PoTokenWebView {
+    @android.webkit.JavascriptInterface <methods>;
+}
