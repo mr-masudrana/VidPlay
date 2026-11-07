@@ -26,7 +26,7 @@ import com.tubex.app.data.remote.YtRepository
 import com.tubex.app.download.DlOption
 import com.tubex.app.download.DownloadEngine
 import com.tubex.app.download.Downloads
-import com.tubex.app.download.MediaExport
+import com.tubex.app.download.DownloadExporter
 import com.tubex.app.util.L
 import com.tubex.app.notification.NotifyScheduler
 import com.tubex.app.player.Navigator
@@ -208,16 +208,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var audioTracks by mutableStateOf<List<YtRepository.AudioTrack>>(emptyList()); private set
     var audioTrackId by mutableStateOf<String?>(null); private set
 
-    // মন্তব্য
-    var comments by mutableStateOf<List<CommentItem>>(emptyList()); private set
-    var commentsTotal by mutableStateOf(0); private set
-    var commentsLoading by mutableStateOf(false); private set
-    var commentsLoadingMore by mutableStateOf(false); private set
-    var commentsMore by mutableStateOf(false); private set
-    var commentSort by mutableStateOf(0); private set      // 0 শীর্ষ, 1 নতুন, 2 পুরনো
-    var replyStates by mutableStateOf<Map<String, ReplyState>>(emptyMap()); private set
-    private var commentsUrl = ""
-    private var commentsNextPage: Page? = null
+    // মন্তব্য (CommentsController-এ; UI আগের নামেই পড়ে)
+    private val commentsCtl = CommentsController(viewModelScope)
+    val comments get() = commentsCtl.items
+    val commentsTotal get() = commentsCtl.total
+    val commentsLoading get() = commentsCtl.loading
+    val commentsLoadingMore get() = commentsCtl.loadingMore
+    val commentsMore get() = commentsCtl.hasMore
+    val commentSort get() = commentsCtl.sort
+    val replyStates get() = commentsCtl.replyStates
+
+    // চ্যানেলের প্লেলিস্ট ট্যাব ও অনলাইন প্লেলিস্ট (PlaylistsController.kt)
+    private val channelPls = ChannelPlaylistsController(viewModelScope) { channel }
+    private val playlistCtl = OnlinePlaylistController(viewModelScope, dao) { toast(it) }
+    val channelPlaylists get() = channelPls.items
+    val channelPlaylistsLoading get() = channelPls.loading
+    val playlistOpen get() = playlistCtl.isOpen
+    val onlinePlaylist get() = playlistCtl.data
+    val playlistLoading get() = playlistCtl.loading
+    val playlistMoreLoading get() = playlistCtl.moreLoading
 
     // চ্যানেল
     var channelOpen by mutableStateOf(false); private set
@@ -757,7 +766,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (castName != null) cast.load(info, start)
                 writeHistory(info, start)
                 boost(info, 0.5)
-                loadComments(url)
+                commentsCtl.load(url)
                 if (sponsorOn) loadSegments(info.id)
                 if (rydOn) loadRyd(info.id)
                 prefetchNext()
@@ -776,7 +785,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         playJob?.cancel(); opening = false; loadingNew = false
         saveProgress()
         clearQueue()
-        current = null; local = d; related = emptyList(); comments = emptyList(); heights = emptyList()
+        current = null; local = d; related = emptyList(); commentsCtl.clearList(); heights = emptyList()
         likes = null; dislikes = null; segments = emptyList(); captions = emptyList(); captionIndex = -1
         audioTracks = emptyList(); audioTrackId = null
         applyTextSelection()
@@ -922,7 +931,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** #হ্যাশট্যাগ ট্যাপ: সব ওভারলে/প্লেয়ার সরিয়ে "#ট্যাগ" সার্চ */
     fun searchTag(tag: String) {
-        expanded = false; channelOpen = false; playlistOpen = false
+        expanded = false; channelOpen = false; playlistCtl.close()
         tab = 0; searching = true
         submitSearch("#$tag")
     }
@@ -1031,33 +1040,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---------- ডাউনলোড: গ্যালারিতে সেভ ও শেয়ার ----------
-    private var pendingSave: DownloadEntity? = null
+    private val exporter = DownloadExporter(ctx, viewModelScope) { toast(it) }
     /** MainActivity বসায়: পুরনো অ্যান্ড্রয়েডে স্টোরেজ পারমিশন চাওয়ার জন্য */
-    var requestStoragePermission: (() -> Unit)? = null
+    var requestStoragePermission: (() -> Unit)?
+        get() = exporter.requestStoragePermission
+        set(v) { exporter.requestStoragePermission = v }
 
-    fun saveToGallery(d: DownloadEntity) {
-        if (android.os.Build.VERSION.SDK_INT < 29 &&
-            ctx.checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) {
-            pendingSave = d
-            requestStoragePermission?.invoke()
-            return
-        }
-        viewModelScope.launch {
-            val r = withContext(Dispatchers.IO) { runCatching { MediaExport.save(ctx, d) } }
-            toast(if (r.isSuccess) L.t("গ্যালারিতে সেভ হয়েছে") else L.f("সেভ ব্যর্থ: {0}", r.exceptionOrNull()?.message))
-        }
-    }
-
-    fun onStoragePermissionResult(granted: Boolean) {
-        val d = pendingSave; pendingSave = null
-        if (d == null) return
-        if (granted) saveToGallery(d) else toast(L.t("স্টোরেজ পারমিশন ছাড়া সেভ করা যাচ্ছে না"))
-    }
-
-    fun shareDownload(d: DownloadEntity) {
-        runCatching { MediaExport.share(ctx, d) }.onFailure { toast(L.f("শেয়ার ব্যর্থ: {0}", it.message)) }
-    }
+    fun saveToGallery(d: DownloadEntity) = exporter.saveToGallery(d)
+    fun onStoragePermissionResult(granted: Boolean) = exporter.onPermissionResult(granted)
+    fun shareDownload(d: DownloadEntity) = exporter.share(d)
 
     fun deleteDownloads(list: List<DownloadEntity>) = viewModelScope.launch {
         list.forEach { d ->
@@ -1205,71 +1196,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (v) current?.let { loadRyd(it.id) } else { dislikes = null; likes = current?.likeCount?.takeIf { it >= 0 } }
     }
 
-    // ---------- মন্তব্য ----------
-    private fun loadComments(url: String) = viewModelScope.launch {
-        commentsUrl = url; commentsNextPage = null; commentsMore = false
-        commentsLoading = true; comments = emptyList(); commentsTotal = 0; replyStates = emptyMap()
-        runCatching { YtRepository.comments(url) }.onSuccess { p ->
-            comments = p.items; commentsNextPage = p.next; commentsMore = p.next != null
-            commentsTotal = if (p.total > 0) p.total else 0
-        }
-        commentsLoading = false
-    }
-
-    /** স্ক্রোল শেষের কাছে এলে পরের পেজ */
-    fun loadMoreComments() {
-        val page = commentsNextPage ?: return
-        if (commentsLoadingMore) return
-        viewModelScope.launch {
-            commentsLoadingMore = true
-            runCatching { YtRepository.moreComments(commentsUrl, page) }
-                .onSuccess { p ->
-                    val have = comments.map { it.id }.toSet()
-                    comments = comments + p.items.filter { it.id !in have }
-                    commentsNextPage = p.next; commentsMore = p.next != null
-                }
-                .onFailure { commentsMore = false }
-            commentsLoadingMore = false
-        }
-    }
-
-    fun chooseCommentSort(i: Int) { commentSort = i }
-
-    /** 0 শীর্ষ (YouTube-এর ক্রম), 1 নতুন, 2 পুরনো। লোড হওয়া মন্তব্যের মধ্যে সাজানো হয়। */
-    fun sortedComments(): List<CommentItem> = when (commentSort) {
-        1 -> comments.sortedByDescending { it.time ?: Long.MIN_VALUE }
-        2 -> comments.sortedBy { it.time ?: Long.MAX_VALUE }
-        else -> comments
-    }
-
-    fun toggleReplies(c: CommentItem) {
-        val cur = replyStates[c.id]
-        if (cur != null && cur.expanded) { replyStates = replyStates + (c.id to cur.copy(expanded = false)); return }
-        if (cur != null && cur.items.isNotEmpty()) { replyStates = replyStates + (c.id to cur.copy(expanded = true)); return }
-        val page = c.replies ?: return
-        loadReplies(c.id, page)
-    }
-
-    fun loadMoreReplies(c: CommentItem) {
-        val page = replyStates[c.id]?.next ?: return
-        loadReplies(c.id, page)
-    }
-
-    private fun loadReplies(id: String, page: Page) = viewModelScope.launch {
-        val cur = replyStates[id] ?: ReplyState()
-        replyStates = replyStates + (id to cur.copy(loading = true, expanded = true))
-        val res = runCatching { YtRepository.moreComments(commentsUrl, page) }.getOrNull()
-        val st = replyStates[id] ?: cur
-        replyStates = replyStates + (id to
-                if (res != null) st.copy(items = st.items + res.items, next = res.next, loading = false)
-                else st.copy(loading = false))
-    }
+    // ---------- মন্তব্য (CommentsController-এ ডেলিগেট) ----------
+    fun loadMoreComments() = commentsCtl.loadMore()
+    fun chooseCommentSort(i: Int) = commentsCtl.chooseSort(i)
+    fun sortedComments(): List<CommentItem> = commentsCtl.sorted()
+    fun toggleReplies(c: CommentItem) = commentsCtl.toggleReplies(c)
+    fun loadMoreReplies(c: CommentItem) = commentsCtl.loadMoreReplies(c)
 
     // ---------- চ্যানেল ও সাবস্ক্রিপশন ----------
     fun openChannel(url: String?) {
         if (url == null) return
         expanded = false; channelOpen = true; channel = null
-        channelPlaylists = null; channelPlaylistsNext = null
+        channelPls.reset()
         viewModelScope.launch {
             channelLoading = true
 try {
@@ -1284,113 +1222,25 @@ try {
     }
     fun closeChannel() { channelOpen = false }
 
-    // ---------- চ্যানেলের প্লেলিস্ট ট্যাব ----------
-    var channelPlaylists by mutableStateOf<List<PlaylistEntry>?>(null); private set   // null = এখনো লোড হয়নি
-    private var channelPlaylistsNext: Page? = null
-    var channelPlaylistsLoading by mutableStateOf(false); private set
-    fun loadChannelPlaylists(more: Boolean = false) {
-        val ch = channel ?: return
-        val tab = ch.playlistsTab ?: return
-        if (channelPlaylistsLoading) return
-        if (more && channelPlaylistsNext == null) return
-        if (!more && channelPlaylists != null) return
-        viewModelScope.launch {
-            channelPlaylistsLoading = true
-            try {
-                val (list, nx) = if (more) YtRepository.channelPlaylistsMore(tab, channelPlaylistsNext!!)
-                else YtRepository.channelPlaylists(tab)
-                if (channel?.url == ch.url) {
-                    channelPlaylists = (if (more) channelPlaylists.orEmpty() else emptyList()) + list
-                    channelPlaylistsNext = nx
-                }
-            } catch (e: Exception) {
-                if (channel?.url == ch.url) { channelPlaylists = channelPlaylists ?: emptyList(); channelPlaylistsNext = null }
-            }
-            channelPlaylistsLoading = false
-        }
-    }
+    // ---------- চ্যানেলের প্লেলিস্ট ট্যাব ও অনলাইন প্লেলিস্ট (PlaylistsController.kt-এ ডেলিগেট) ----------
+    fun loadChannelPlaylists(more: Boolean = false) = channelPls.load(more)
 
-    // ---------- ইউটিউব প্লেলিস্ট (অনলাইন): খোলা, চালানো, লাইব্রেরিতে সেভ ----------
-    var playlistOpen by mutableStateOf(false); private set
-    var onlinePlaylist by mutableStateOf<PlaylistData?>(null); private set
-    var playlistLoading by mutableStateOf(false); private set
-    var playlistMoreLoading by mutableStateOf(false); private set
-
-    fun openPlaylist(url: String) {
-        expanded = false; playlistOpen = true; onlinePlaylist = null
-        viewModelScope.launch {
-            playlistLoading = true
-            try { onlinePlaylist = YtRepository.playlist(url) } catch (e: Exception) { /* স্ক্রিনে "লোড করা যায়নি" দেখায় */ }
-            playlistLoading = false
-        }
-    }
-    fun closePlaylist() { playlistOpen = false }
-
-    fun loadMorePlaylist() {
-        val pl = onlinePlaylist ?: return
-        val next = pl.next ?: return
-        if (playlistMoreLoading) return
-        viewModelScope.launch {
-            playlistMoreLoading = true
-            try {
-                val (list, nx) = YtRepository.playlistMore(pl.url, next)
-                val cur = onlinePlaylist
-                if (cur != null && cur.url == pl.url) onlinePlaylist = cur.copy(videos = cur.videos + list, next = nx)
-            } catch (e: Exception) {
-                val cur = onlinePlaylist
-                if (cur != null && cur.url == pl.url) onlinePlaylist = cur.copy(next = null)
-            }
-            playlistMoreLoading = false
-        }
-    }
-
-    /** বাকি সব পেজ লোড (সর্বোচ্চ ৫০০ ভিডিও) এবং পুরো তালিকা ফেরত */
-    private suspend fun loadAllPlaylist(): List<VideoItem> {
-        while (playlistMoreLoading) kotlinx.coroutines.delay(100)
-        var pl = onlinePlaylist ?: return emptyList()
-        var guard = 0
-        while (pl.next != null && pl.videos.size < 500 && guard++ < 30) {
-            val (list, nx) = try { YtRepository.playlistMore(pl.url, pl.next!!) } catch (e: Exception) { Pair(emptyList<VideoItem>(), null) }
-            pl = pl.copy(videos = pl.videos + list, next = nx)
-        }
-        if (onlinePlaylist?.url == pl.url) onlinePlaylist = pl
-        return pl.videos
-    }
+    fun openPlaylist(url: String) { expanded = false; playlistCtl.open(url) }
+    fun closePlaylist() = playlistCtl.close()
+    fun loadMorePlaylist() = playlistCtl.loadMore()
+    fun saveOnlinePlaylist() = playlistCtl.saveToLibrary()
 
     private fun VideoItem.toQ() = QItem(url, title, channel, thumb)
 
     /** index নম্বর থেকে (বা শাফল করে) প্লেলিস্ট চালায়; বাকি পেজগুলো পেছনে লোড হয়ে কিউতে যোগ হয় */
     fun playPlaylistFrom(index: Int, shuffleStart: Boolean = false) {
-        val pl = onlinePlaylist ?: return
+        val pl = playlistCtl.data ?: return
         if (pl.videos.isEmpty()) return
         playQueueItems(pl.videos.map { it.toQ() }, index, shuffleStart)
         val queued = queueItems
         if (pl.next != null) viewModelScope.launch {
-            val all = loadAllPlaylist()
+            val all = playlistCtl.loadAll()
             if (queueItems === queued && all.size > queued.size) queueItems = all.map { it.toQ() }   // এখনো একই কিউ থাকলে বাড়াই
-        }
-    }
-
-    /** পুরো প্লেলিস্ট লাইব্রেরির লোকাল প্লেলিস্ট হিসেবে সেভ */
-    fun saveOnlinePlaylist() {
-        val pl = onlinePlaylist ?: return
-        viewModelScope.launch {
-            toast(L.t("সেভ হচ্ছে…"))
-            val all = loadAllPlaylist()
-            if (all.isEmpty()) { toast(L.t("সেভ করা যায়নি")); return@launch }
-            val existing = dao.playlistsOnce().map { it.name }.toSet()
-            val base = pl.name.ifBlank { "Playlist" }
-            var name = base; var n = 2
-            while (name in existing) { name = "$base ($n)"; n++ }
-            val now = System.currentTimeMillis()
-            val id = dao.addPlaylist(PlaylistEntity(name = name, createdAt = now))
-            all.forEachIndexed { i, v ->
-                dao.addPlaylistItem(PlaylistItemEntity(
-                    playlistId = id, url = v.url, title = v.title, channel = v.channel,
-                    thumb = v.thumb, durationSec = v.durationSec, addedAt = now + i
-                ))
-            }
-            toast(L.f("\"{0}\" লাইব্রেরিতে সেভ হয়েছে", name))
         }
     }
 
@@ -1451,17 +1301,7 @@ try {
     // ---------- প্রোফাইল এক্সপোর্ট / ইম্পোর্ট ----------
     fun exportProfile(uri: Uri) = viewModelScope.launch {
         try {
-            val prefsJson = JSONObject().put("theme", themeIndex).put("sponsorblock", sponsorOn).put("ryd", rydOn)
-                .put("captionSize", captionSizeIndex).put("captionLang", prefs.captionLang)
-                .put("qualityWifi", qualityWifi).put("qualityMobile", qualityMobile).put("skipSilence", skipSilence)
-                .put("captionColor", captionColorIndex).put("captionBg", captionBgIndex).put("lang", langMode)
-                .put("autoplay", autoplay).put("banglaAudio", banglaAudio).put("notifyEnabled", notifyOn).put("notifyHours", notifyHours)
-                .put("dearrowTitles", prefs.dearrowTitles).put("dearrowThumbs", prefs.dearrowThumbs)
-                .put("floatMini", floatingMini)
-                .put("themeAuto", themeAuto).put("accentColor", accentColor).put("dataSaver", dataSaver)
-                .put("backgroundPlay", backgroundPlay).put("pipPlay", pipOn).put("wifiOnlyDownload", wifiOnlyDl)
-                .put("parallelDownloads", parallelDl).put("saveSearchHistory", saveSearchHist)
-                .put("saveWatchHistory", saveWatchHist)
+            val prefsJson = ProfileSettings.toJson(this@MainViewModel, prefs)
             val root = ProfileBackup.build(dao, prefsJson)
             withContext(Dispatchers.IO) {
                 ctx.contentResolver.openOutputStream(uri, "wt")!!.bufferedWriter().use { it.write(root.toString(2)) }
@@ -1478,35 +1318,7 @@ try {
             val root = JSONObject(text)
             if (!ProfileBackup.isValid(root)) { toast(L.t("এটি TubeX-এর প্রোফাইল ফাইল নয়")); return@launch }
             AppDb.get(ctx).withTransaction { ProfileBackup.restore(dao, root) }   // মাঝপথে ফেইল করলে কিছুই বদলাবে না
-            root.optJSONObject("prefs")?.let {
-                chooseTheme(it.optInt("theme", themeIndex))
-                toggleSponsor(it.optBoolean("sponsorblock", sponsorOn))
-                toggleRyd(it.optBoolean("ryd", rydOn))
-                chooseCaptionSize(it.optInt("captionSize", captionSizeIndex))
-                chooseDefaultQuality(true, it.optInt("qualityWifi", qualityWifi))
-                chooseDefaultQuality(false, it.optInt("qualityMobile", qualityMobile))
-                toggleSkipSilence(it.optBoolean("skipSilence", skipSilence))
-                prefs.captionLang = it.optString("captionLang", "")
-                chooseCaptionColor(it.optInt("captionColor", captionColorIndex))
-                chooseCaptionBg(it.optInt("captionBg", captionBgIndex))
-                chooseLang(it.optInt("lang", langMode))
-                if (it.optBoolean("autoplay", autoplay) != autoplay) toggleAutoplay()
-                applyBanglaAudio(it.optBoolean("banglaAudio", banglaAudio))
-                toggleNotify(it.optBoolean("notifyEnabled", notifyOn))
-                chooseNotifyHours(it.optInt("notifyHours", notifyHours))
-                toggleDearrowTitles(it.optBoolean("dearrowTitles", prefs.dearrowTitles))
-                toggleDearrowThumbs(it.optBoolean("dearrowThumbs", prefs.dearrowThumbs))
-                toggleFloatingMini(it.optBoolean("floatMini", floatingMini))
-                applyThemeAuto(it.optBoolean("themeAuto", themeAuto))
-                chooseAccent(it.optInt("accentColor", accentColor))
-                applyDataSaver(it.optBoolean("dataSaver", dataSaver))
-                applyBackgroundPlay(it.optBoolean("backgroundPlay", backgroundPlay))
-                setPip(it.optBoolean("pipPlay", pipOn))
-                setWifiOnlyDownload(it.optBoolean("wifiOnlyDownload", wifiOnlyDl))
-                chooseParallelDownloads(it.optInt("parallelDownloads", parallelDl))
-                setSaveSearchHistory(it.optBoolean("saveSearchHistory", saveSearchHist))
-                setSaveWatchHistory(it.optBoolean("saveWatchHistory", saveWatchHist))
-            }
+            root.optJSONObject("prefs")?.let { ProfileSettings.apply(this@MainViewModel, prefs, it) }
             toast(L.t("প্রোফাইল ইম্পোর্ট হয়েছে"))
             loadInterests()
         } catch (e: Exception) { toast(L.f("ইম্পোর্ট ব্যর্থ: {0}", e.message)) }
