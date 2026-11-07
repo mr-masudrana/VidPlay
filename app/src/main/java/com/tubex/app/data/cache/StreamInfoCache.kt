@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class StreamInfoCache(
     private val scope: CoroutineScope,
-    private val maxEntries: Int = 8,
+    private val maxEntries: Int = 12,
     private val ttlMs: Long = 30 * 60_000L
 ) {
     private val cache = object : LinkedHashMap<String, Pair<Long, StreamInfo>>(16, 0.75f, true) {
@@ -31,6 +31,10 @@ class StreamInfoCache(
         }
         return d.await()
     }
+
+    /** ক্যাশে বৈধভাবে আছে বা এখন আনা হচ্ছে — প্রি-ফেচে একই ভিডিও দুবার না আনতে */
+    fun has(url: String): Boolean =
+        cache[url]?.let { System.currentTimeMillis() - it.first < ttlMs } == true || inflight.containsKey(url)
 
     /** মেয়াদোত্তীর্ণ স্ট্রিম URL-এর পর: পুরনো এন্ট্রি বাদ */
     fun remove(url: String) { cache.remove(url) }

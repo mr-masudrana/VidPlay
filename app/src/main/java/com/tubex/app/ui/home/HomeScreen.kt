@@ -1,6 +1,7 @@
 package com.tubex.app.ui.home
 
 import com.tubex.app.data.model.VideoItem
+import com.tubex.app.data.search.ChannelSearch
 import com.tubex.app.data.search.SearchFilter
 import com.tubex.app.util.L
 import com.tubex.app.ui.components.VideoCard
@@ -275,8 +276,21 @@ private fun HomeFeed(
     pullState: PullToRefreshState, top: Dp, bottom: Dp
 ) {
     val hist by vm.history.collectAsState()
+    val mySubs by vm.subs.collectAsState()
     val showShelf = vm.chipIndex == 0 && !vm.isSearchResult
     val resume = remember(hist) { continueWatching(hist) }
+    // তালিকার শেষের কাছে পৌঁছালে "আপনার জন্য" ফিডে আরও ভিডিও লোড
+    val nearEnd by remember {
+        derivedStateOf {
+            val total = listState.layoutInfo.totalItemsCount
+            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            total > 0 && last >= total - 4
+        }
+    }
+    LaunchedEffect(showShelf) { if (showShelf) vm.loadHomePlaylists() }
+    LaunchedEffect(nearEnd, shown.size) {
+        if (nearEnd && showShelf) vm.loadMoreForYou()
+    }
     PullToRefreshBox(
         isRefreshing = vm.refreshing, onRefresh = { vm.refreshFeed() }, state = pullState,
         modifier = Modifier.fillMaxSize(),
@@ -303,7 +317,27 @@ private fun HomeFeed(
                         TextButton(onClick = { vm.resetFilters() }) { Text(L.t("ফিল্টার মুছুন")) }
                     }
                 }
-                items(shown) { v -> VideoCard(v, onChannel = { vm.openChannel(v.channelUrl) }) { vm.play(v.url) } }
+                if (vm.isSearchResult && vm.searchChannels.isNotEmpty()) {
+                    items(vm.searchChannels) { c ->
+                        ChannelResultRow(
+                            c, subscribed = ChannelSearch.isSubscribed(mySubs.map { it.url }, c),
+                            onOpen = { vm.openChannel(c.url) },
+                            onToggleSub = { vm.toggleSub(c.url, c.name, c.avatar) }
+                        )
+                    }
+                    item { HorizontalDivider(color = Chip) }
+                }
+                // প্লেলিস্ট সারি প্রথম ৪টি ভিডিওর পরে (অফিসিয়াল YouTube-এর মতো মাঝখানে)
+                val plShelf = showShelf && vm.homePlaylists.isNotEmpty()
+                val head = if (plShelf) minOf(4, shown.size) else shown.size
+                items(shown.take(head)) { v -> VideoCard(v, onChannel = { vm.openChannel(v.channelUrl) }) { vm.play(v.url) } }
+                if (plShelf) item { HomePlaylistsShelf(vm.homePlaylists) { vm.openPlaylist(it) } }
+                if (plShelf) items(shown.drop(head)) { v -> VideoCard(v, onChannel = { vm.openChannel(v.channelUrl) }) { vm.play(v.url) } }
+                if (vm.loadingMore) item {
+                    Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = YtRed, strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
+                    }
+                }
             }
         }
     }

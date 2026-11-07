@@ -115,6 +115,9 @@ internal object VisitorData {
                 "Cookie" to listOf("SOCS=CAI; CONSENT=YES+1")   // ইউরোপের কনসেন্ট পেজ এড়াতে
             )
         )
-        regex.find(res.responseBody())?.groupValues?.get(1)
+        parse(res.responseBody())
     } catch (t: Throwable) { null }
+
+    /** হোমপেজের HTML থেকে প্রথম visitorData; না পেলে null */
+    fun parse(html: String): String? = regex.find(html)?.groupValues?.get(1)
 }

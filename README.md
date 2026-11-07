@@ -7,6 +7,9 @@ NewPipe Extractor ভিত্তিক YouTube-স্টাইল ভিডি�
 2. রিপোজিটরির **Actions** ট্যাবে "Build APK" ওয়ার্কফ্লো নিজে চলবে (বা **Run workflow** চাপুন)।
 3. বিল্ড শেষ হলে রানের পেজের নিচে **Artifacts → tubex-debug-apk** থেকে APK নামান।
 
+## নাইটলি বিল্ড
+`main`-এ প্রতিটি push-এ "Nightly APK" ওয়ার্কফ্লো `nightly` প্রি-রিলিজে `tubex-nightly.apk` আপলোড করে। এটি আলাদা অ্যাপ (`com.tubex.app.nightly`) হিসেবে ইনস্টল হয়, স্টেবল অ্যাপের ডেটা ছোঁয়ে না এবং স্টেবল রিলিজ থেকে আপডেট খোঁজে না। `KEYSTORE_BASE64` সিক্রেট থাকলে সাইনড, না থাকলে ডিবাগ APK বানায়।
+
 ## লোকালি বিল্ড
 Android Studio-তে প্রজেক্ট খুলুন, অথবা Gradle 8.9 + JDK 17 দিয়ে `gradle assembleDebug`।
 

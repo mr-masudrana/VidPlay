@@ -14,7 +14,10 @@ fun versionCodeOf(v: String): Int {
     return p.getOrElse(0) { 0 } * 10000 + p.getOrElse(1) { 0 } * 100 + p.getOrElse(2) { 0 }
 }
 // আপডেট খোঁজার রিপোজিটরি ("owner/repo"): GitHub Actions-এ নিজে সেট হয়; লোকালি -PupdateRepo=owner/repo দিন
-val updateRepo: String = System.getenv("GITHUB_REPOSITORY") ?: (project.findProperty("updateRepo") as String?) ?: ""
+// নাইটলি বিল্ড (NIGHTLY=true): আলাদা অ্যাপ হিসেবে ইনস্টল হয় (.nightly) এবং স্টেবল রিলিজ থেকে আপডেট খোঁজে না
+val nightly: Boolean = System.getenv("NIGHTLY") == "true"
+val updateRepo: String =
+    if (nightly) "" else (System.getenv("GITHUB_REPOSITORY") ?: (project.findProperty("updateRepo") as String?) ?: "")
 
 android {
     namespace = "com.tubex.app"
@@ -27,6 +30,7 @@ android {
         versionCode = versionCodeOf(appVersion)
         versionName = appVersion
         buildConfigField("String", "UPDATE_REPO", "\"$updateRepo\"")
+        if (nightly) { applicationIdSuffix = ".nightly"; versionNameSuffix = "-nightly" }
     }
 
     // রিলিজ সাইনিং: কীস্টোর পরিবেশ ভেরিয়েবল থেকে আসে (নিচে .github/workflows/release.yml দেখুন)।

@@ -107,4 +107,18 @@ object ProfileBackup {
             }
         }
     }
+
+    /** শুধু রিকমেন্ডেশন প্রোফাইল (আগ্রহের স্কোর) আলাদা ফাইলে এক্সপোর্টের জন্য */
+    fun interestsToJson(list: List<InterestEntity>): JSONObject = JSONObject()
+        .put("app", "tubex").put("type", "interests").put("version", 1)
+        .put("interests", JSONArray().also { a ->
+            list.forEach { a.put(JSONObject().put("topic", it.topic).put("score", it.score).put("updatedAt", it.updatedAt)) }
+        })
+
+    /** ফাইল TubeX-এর না হলে বা আগ্রহের তালিকা না থাকলে null */
+    fun interestsFromJson(root: JSONObject): List<InterestEntity>? {
+        if (!isValid(root)) return null
+        val arr = root.optJSONArray("interests") ?: return null
+        return arr.objects().map { InterestEntity(it.getString("topic"), it.optDouble("score", 0.0), it.optLong("updatedAt")) }
+    }
 }

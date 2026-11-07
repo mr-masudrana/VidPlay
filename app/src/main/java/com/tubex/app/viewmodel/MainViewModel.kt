@@ -18,10 +18,15 @@ import com.tubex.app.data.model.ChannelData
 import com.tubex.app.data.model.CommentItem
 import com.tubex.app.data.model.PlaylistData
 import com.tubex.app.data.model.PlaylistEntry
+import com.tubex.app.data.model.ChannelResult
 import com.tubex.app.data.model.VideoItem
 import com.tubex.app.data.recommend.Blocks
 import com.tubex.app.data.recommend.Recommender
 import com.tubex.app.data.remote.DeArrow
+import com.tubex.app.data.search.ChannelSearch
+import com.tubex.app.data.search.HomePlaylists
+import com.tubex.app.data.search.PrefetchPlan
+import com.tubex.app.data.search.PlaylistLinks
 import com.tubex.app.data.remote.Extras
 import com.tubex.app.data.remote.Segment
 import com.tubex.app.data.remote.YtRepository
@@ -156,7 +161,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var chipIndex by mutableStateOf(0); private set
     private var chipQuery: String? = null
     /** ক্যাটাগরি/আপনার-জন্য ফিডের ক্যাশ: একই ফিডে ফিরলে আবার লোড হয় না (পুল-টু-রিফ্রেশে নতুন হয়) */
-    private val feedCache = FeedCache()
+    private val feedCache = FeedCache(ttlMs = 3 * 60_000L)   // ৩ মিনিট: ট্যাব বদলে ফিরলে ফিড তাজা থাকে
     private fun cachedFeed(key: String): List<VideoItem>? = feedCache.get(key)
     private fun putFeed(key: String, list: List<VideoItem>) = feedCache.put(key, list)
     /** ব্যাক জেসচারের প্রিভিউর জন্য: বর্তমান ক্যাটাগরির হোম ফিড (ক্যাশ থেকে) */
@@ -175,6 +180,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var fDuration by mutableStateOf(0); private set
     var fSort by mutableStateOf(0); private set
     private var feedJob: Job? = null
+
+    /** সার্চে মিলে যাওয়া চ্যানেল (ভিডিওর ওপরে দেখায়) */
+    var searchChannels by mutableStateOf<List<ChannelResult>>(emptyList()); private set
+    /** হোমের নিচে স্ক্রলে "আরও লোড" */
+    var loadingMore by mutableStateOf(false); private set
+    private var feedEnd = false            // আর নতুন ভিডিও না পেলে থামি
+    private var moreJob: Job? = null
+
     var opening by mutableStateOf(false); private set
     /** নতুন ভিডিওর তথ্য আসার আগ পর্যন্ত true: প্লেয়ার পেজ স্কেলিটনসহ সাথে সাথে খোলে */
     var loadingNew by mutableStateOf(false); private set
@@ -263,6 +276,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val queue = PlayQueue()
     val queueItems get() = queue.items
     val queueIndex get() = queue.index
+    val queueTitle get() = queue.title          // প্লেলিস্ট থেকে এলে তার নাম
     val shuffle get() = queue.shuffle
     val repeat get() = queue.repeat          // 0 বন্ধ, 1 কিউ, 2 একটি ভিডিও
     private val streamCache = StreamInfoCache(viewModelScope)
@@ -379,12 +393,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- ফিড ----------
     fun load(query: String?, search: Boolean = false, silent: Boolean = false): Job {
-        feedJob?.cancel()
+        feedJob?.cancel(); moreJob?.cancel(); loadingMore = false
+        if (!search) searchChannels = emptyList()
         val key = "cat:${query.orEmpty()}"
         if (!search && !silent) cachedFeed(key)?.let { c ->
             feedKind = 1; feedQuery = query
             isSearchResult = false; resetFilters()
-            feed = c; error = null
+            feed = c; error = null; prefetchTop(c)
             loading = false; feedLoading = false; refreshing = false
             return viewModelScope.launch { }
         }
@@ -393,13 +408,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (silent) refreshing = true else {
                 loading = true; feedLoading = true; error = null
                 isSearchResult = search
-                if (search) resetFilters()
+                if (search) { resetFilters(); searchChannels = emptyList() }
                 feed = emptyList()
             }
             try {
-                val r = filterBlocked(if (query.isNullOrBlank()) YtRepository.trending() else YtRepository.search(query))
+                val r: List<VideoItem>
+                if (search && !query.isNullOrBlank()) {
+                    // ভিডিও ও চ্যানেল একসাথে; চ্যানেল না এলেও ভিডিও দেখানো হয়
+                    val (vids, chans) = coroutineScope {
+                        val c = async { runCatching { YtRepository.searchChannels(query) }.getOrDefault(emptyList()) }
+                        val v = async { YtRepository.search(query) }
+                        v.await() to c.await()
+                    }
+                    val blocked = dao.blocksOnce().map { it.entry }.toSet()
+                    searchChannels = ChannelSearch.filterBlocked(chans, blocked)
+                    r = filterBlocked(vids)
+                } else {
+                    r = filterBlocked(if (query.isNullOrBlank()) YtRepository.trending() else YtRepository.search(query))
+                }
                 if (!search) putFeed(key, r)
-                if (r.isNotEmpty() || !silent) feed = r
+                if (r.isNotEmpty() || !silent) { feed = r; prefetchTop(r) }
                 if (feed.isEmpty()) error = L.t("কোনো ভিডিও পাওয়া যায়নি") else error = null
             } catch (e: CancellationException) { throw e
             } catch (e: Exception) {
@@ -412,50 +440,78 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return job
     }
 
+    /**
+     * "আপনার জন্য" ফিডের একটি ব্যাচ: নতুন র‍্যান্ডম উৎস থেকে প্রার্থী এনে র‍্যাংক করে।
+     * [exclude]: ফিডে আগে থেকেই থাকা ভিডিও (আরও লোডের সময় পুনরাবৃত্তি এড়াতে)।
+     */
+    private suspend fun buildForYou(exclude: Set<String>): List<VideoItem> {
+        val interests = dao.interests()
+        val shownCounts = prefs.shownVideos.groupingBy { it }.eachCount()
+        // প্রতিবার আলাদা বিষয়: আগ্রহের ওজন ধরে র‍্যান্ডম বাছাই (আগে সবসময় একই ৩টি সার্চ হতো)
+        val kwWeights = (Recommender.top(interests, 14) + Recommender.topForBucket(interests, 6))
+            .filter { it.first.startsWith("kw:") }
+            .groupBy({ it.first.removePrefix("kw:") }, { it.second })
+            .map { (k, v) -> k to v.sum() }
+        val picked = Recommender.pickTopics(kwWeights, 4)
+        val queries = picked.take(3) + (if (picked.size >= 2) listOf("${picked[0]} ${picked[1]}") else emptyList())
+        // সাম্প্রতিক দেখার related: সবচেয়ে সাম্প্রতিকটি + আগের ১০টির মধ্যে একটি র‍্যান্ডম
+        val hist = history.value
+        val relSrc = (listOfNotNull(hist.firstOrNull()?.url) + hist.drop(1).take(9).shuffled().take(1).map { it.url }).distinct()
+        // সাবস্ক্রাইব করা চ্যানেলের তাজা ভিডিও (প্রতিবার ৩টি র‍্যান্ডম চ্যানেল)
+        val subSrc = subs.value.shuffled().take(3)
+        val (pools, relatedPool) = coroutineScope {
+            val rel = relSrc.map { u ->
+                async { runCatching { YtRepository.related(YtRepository.streamInfo(u)) }.getOrDefault(emptyList()) }
+            }
+            val subJobs = subSrc.map { sc ->
+                async {
+                    kotlinx.coroutines.withTimeoutOrNull(8_000) {
+                        runCatching { YtRepository.channelVideos(sc.url) }.getOrDefault(emptyList())
+                    }.orEmpty().take(8)
+                }
+            }
+            val jobs = listOf(async { runCatching { YtRepository.trending() }.getOrDefault(emptyList()) }) +
+                    queries.map { q -> async { runCatching { YtRepository.search(q) }.getOrDefault(emptyList()) } } +
+                    subJobs
+            jobs.awaitAll() to rel.awaitAll().flatten()
+        }
+        val merged = (pools.flatten() + relatedPool).distinctBy { it.url }.filter { it.url !in exclude }
+        val ranked = filterBlocked(
+            Recommender.rank(
+                merged, interests, dao.watchedUrls().toSet(), history.value,
+                subs.value.map { it.name.lowercase() }.toSet(),
+                related = relatedPool.map { it.url }.toSet(),
+                shown = shownCounts
+            )
+        )
+        // কম লাইক-অনুপাতের ভিডিও শেষে পাঠানো (সর্বোচ্চ ৪ সেকেন্ড অপেক্ষা; না পেলে যেমন আছে তেমন)
+        val r = if (prefs.ryd) kotlinx.coroutines.withTimeoutOrNull(4_000) { demoteLowEngagement(ranked) } ?: ranked
+        else ranked
+        return r
+    }
+
     fun loadForYou(silent: Boolean = false): Job {
-        feedJob?.cancel()
+        feedJob?.cancel(); moreJob?.cancel(); loadingMore = false
+        searchChannels = emptyList()
         if (!silent) cachedFeed("foryou")?.let { c ->
             feedKind = 0; feedQuery = null
             isSearchResult = false; resetFilters()
-            feed = c; error = null
+            feed = c; error = null; prefetchTop(c)
             loading = false; feedLoading = false; refreshing = false
             return viewModelScope.launch { }
         }
         val job = viewModelScope.launch {
-            feedKind = 0; feedQuery = null
+            feedKind = 0; feedQuery = null; feedEnd = false
             if (silent) refreshing = true else {
                 loading = true; feedLoading = true; error = null
                 isSearchResult = false; resetFilters()
                 feed = emptyList()
             }
             try {
-                val interests = dao.interests()
-                val topics = Recommender.top(interests, 8).map { it.first }
-                    .filter { it.startsWith("kw:") }.take(3).map { it.removePrefix("kw:") }
-                val recentUrl = history.value.firstOrNull()?.url
-                val (pools, relatedPool) = coroutineScope {
-                    // সাম্প্রতিক দেখা ভিডিওর related: ফিডে স্বাভাবিক বিষয়-বদল আনে
-                    val rel = async {
-                        if (recentUrl == null) emptyList<VideoItem>()
-                        else runCatching { YtRepository.related(YtRepository.streamInfo(recentUrl)) }.getOrDefault(emptyList())
-                    }
-                    val jobs = listOf(async { runCatching { YtRepository.trending() }.getOrDefault(emptyList()) }) +
-                            topics.map { q -> async { runCatching { YtRepository.search(q) }.getOrDefault(emptyList()) } }
-                    jobs.awaitAll() to rel.await()
-                }
-                val merged = (pools.flatten() + relatedPool).distinctBy { it.url }
-                val ranked = filterBlocked(
-                    Recommender.rank(
-                        merged, interests, dao.watchedUrls().toSet(), history.value,
-                        subs.value.map { it.name.lowercase() }.toSet(),
-                        related = relatedPool.map { it.url }.toSet()
-                    )
-                )
-                // কম লাইক-অনুপাতের ভিডিও শেষে পাঠানো (সর্বোচ্চ ৪ সেকেন্ড অপেক্ষা; না পেলে যেমন আছে তেমন)
-                val r = if (prefs.ryd) kotlinx.coroutines.withTimeoutOrNull(4_000) { demoteLowEngagement(ranked) } ?: ranked
-                else ranked
+                val r = buildForYou(emptySet())
                 putFeed("foryou", r)
-                if (r.isNotEmpty() || !silent) feed = r
+                prefs.shownVideos = (prefs.shownVideos + r.take(20).map { it.url }).takeLast(300)
+                if (r.isNotEmpty() || !silent) { feed = r; prefetchTop(r) }
                 if (feed.isEmpty()) error = L.t("কোনো ভিডিও পাওয়া যায়নি") else error = null
             } catch (e: CancellationException) { throw e
             } catch (e: Exception) {
@@ -466,6 +522,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         feedJob = job
         return job
+    }
+
+    /** "আপনার জন্য" ফিডের শেষে পৌঁছালে নতুন ব্যাচ যোগ করে (সর্বোচ্চ ২০০টি ভিডিও) */
+    fun loadMoreForYou() {
+        if (feedKind != 0 || isSearchResult || feedLoading || refreshing || loadingMore || feedEnd) return
+        if (feed.isEmpty() || feed.size >= 200) return
+        moreJob?.cancel()
+        moreJob = viewModelScope.launch {
+            loadingMore = true
+            try {
+                val have = feed.map { it.url }.toSet()
+                val more = buildForYou(have)
+                if (feedKind == 0 && !isSearchResult) {
+                    if (more.isEmpty()) feedEnd = true
+                    else {
+                        feed = feed + more
+                        putFeed("foryou", feed)
+                        prefs.shownVideos = (prefs.shownVideos + more.take(20).map { it.url }).takeLast(300)
+                    }
+                }
+            } catch (e: CancellationException) { throw e
+            } catch (e: Exception) { /* আরও লোড ব্যর্থ হলে চুপচাপ; পরের স্ক্রলে আবার চেষ্টা */ }
+            loadingMore = false
+        }
     }
 
     /** ফিডের প্রথম ১৬টির লাইক/ডিসলাইক (RYD) এনে কম মানের ভিডিও শেষে নামায় */
@@ -483,9 +563,31 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** পুল-টু-রিফ্রেশ: বর্তমান ফিড (আপনার জন্য / ক্যাটাগরি / সার্চ) আবার লোড করে */
+    // ---------- হোমের প্লেলিস্ট সারি ----------
+    var homePlaylists by mutableStateOf<List<PlaylistEntry>>(emptyList()); private set
+    private var homePlaylistsJob: Job? = null
+    private var homePlaylistsAt = 0L
+
+    /** আগ্রহের বিষয় ধরে প্লেলিস্ট খুঁজে হোমে দেখায়; ৩০ মিনিট ক্যাশ, ব্যর্থ হলে আগেরটাই থাকে */
+    fun loadHomePlaylists(force: Boolean = false) {
+        val fresh = System.currentTimeMillis() - homePlaylistsAt < 30 * 60_000L
+        if (!force && homePlaylists.isNotEmpty() && fresh) return
+        if (homePlaylistsJob?.isActive == true) return
+        homePlaylistsJob = viewModelScope.launch {
+            val topics = Recommender.top(dao.interests(), 6).map { it.first }
+            val groups = coroutineScope {
+                HomePlaylists.queries(topics).map { q ->
+                    async { runCatching { YtRepository.searchPlaylists(q) }.getOrDefault(emptyList()) }
+                }.awaitAll()
+            }
+            val merged = HomePlaylists.merge(groups)
+            if (merged.isNotEmpty()) { homePlaylists = merged; homePlaylistsAt = System.currentTimeMillis() }
+        }
+    }
+
     fun refreshFeed() {
         when (feedKind) {
-            0 -> loadForYou(silent = true)
+            0 -> { loadForYou(silent = true); loadHomePlaylists(force = true) }
             else -> load(feedQuery, search = feedKind == 2, silent = true)
         }
     }
@@ -569,11 +671,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---------- প্লেব্যাক ----------
-    fun play(url: String) { clearQueue(); startPlay(url) }
+    /** নতুন কিছু চালু হলে বাড়ে; পেছনে চলা "লিংকের প্লেলিস্ট কিউতে তোলা" কাজ এটা দেখে বাতিল হয় */
+    private var playGen = 0
 
-    fun playQueueItems(items: List<QItem>, index: Int, shuffleStart: Boolean = false) {
+    fun play(url: String) { playGen++; clearQueue(); startPlay(url) }
+
+    fun playQueueItems(items: List<QItem>, index: Int, shuffleStart: Boolean = false, title: String? = null) {
         if (items.isEmpty()) return
-        startPlay(queue.start(items, index, shuffleStart).url)
+        playGen++
+        startPlay(queue.start(items, index, shuffleStart, title).url)
     }
 
     private fun clearQueue() = queue.clear()
@@ -649,10 +755,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** চলার সময়েই পরের সম্ভাব্য ভিডিওর তথ্য আগে থেকে এনে রাখা, যাতে "পরের"/অটোপ্লে প্রায় সাথে সাথে চলে */
     private fun prefetchNext() = viewModelScope.launch {
         if (dataSaver) return@launch
-        delay(1500)
+        delay(400)   // আগে ১৫০০ms ছিল; প্লে শুরু হয়ে গেলেই পরেরটা আনা শুরু
         val next = if (queueItems.isNotEmpty() && queueIndex + 1 < queueItems.size) queueItems[queueIndex + 1].url
         else related.firstOrNull { it.url !in sessionPlayed && it.url != current?.url }?.url
         if (next != null) runCatching { infoFor(next) }
+    }
+
+    private fun isUnmetered(): Boolean {
+        val cm = ctx.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+        return cm?.isActiveNetworkMetered == false
+    }
+
+    private var prefetchJob: Job? = null
+
+    /**
+     * ফিড/সার্চ রেজাল্ট আসার পর ওপরের ২টি ভিডিওর স্ট্রিম-তথ্য পেছনে আনা (শুধু আনমিটার্ড নেটে, ডেটা সেভার বন্ধে)।
+     * ট্যাপ করলে StreamInfoCache থেকে সাথে সাথে বা চলমান ফেচ ধরেই প্লে শুরু হয়। প্লে চলছে/খুলছে এমন সময় থেমে থাকে।
+     */
+    private fun prefetchTop(list: List<VideoItem>, max: Int = 2) {
+        if (dataSaver || !isUnmetered()) return
+        prefetchJob?.cancel()
+        prefetchJob = viewModelScope.launch {
+            delay(600)
+            for (v in PrefetchPlan.pick(list, { streamCache.has(it) }, max)) {
+                if (opening) return@launch
+                runCatching { infoFor(v.url) }
+                delay(400)
+            }
+        }
     }
 
     /** অ্যাপ খোলার পর (শুধু আনমিটার্ড নেটে) ফিডের প্রথম ভিডিও আগে থেকে এনে রাখা: এক্সট্রাক্টর গরম হয় ও প্রথম প্লে দ্রুত হয় */
@@ -873,11 +1003,38 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val url = raw.trim()
         val uri = Uri.parse(url)
         val path = uri.path ?: ""
+        val link = PlaylistLinks.parse(url)
         if (path == "/playlist" && !uri.getQueryParameter("list").isNullOrBlank()) openPlaylist(url)
         else if (path.startsWith("/channel/") || path.startsWith("/c/") || path.startsWith("/user/") || path.startsWith("/@"))
             openChannel(url)
+        else if (link != null) playWithPlaylist(url, link)
         else play(url)
     }
+
+    /**
+     * `watch?v=…&list=…` লিংক: ভিডিও সাথে সাথে চলে, পেছনে পুরো প্লেলিস্ট এনে কিউতে বসে (ভিডিওটা যে পজিশনে)।
+     * শাফল চালু থাকলে প্লেলিস্টের ভেতরেই এলোমেলো চলে। ততক্ষণে অন্য কিছু চালু হলে কিউ বসানো হয় না।
+     */
+    private fun playWithPlaylist(url: String, link: PlaylistLinks.Link) {
+        playGen++
+        val gen = playGen
+        clearQueue(); startPlay(url)
+        viewModelScope.launch {
+            try {
+                var pl = YtRepository.playlist(PlaylistLinks.fetchUrl(url, link))
+                var guard = 0
+                while (pl.next != null && pl.videos.size < 500 && guard++ < 30) {
+                    val (more, nx) = try { YtRepository.playlistMore(pl.url, pl.next!!) } catch (e: Exception) { break }
+                    pl = pl.copy(videos = pl.videos + more, next = nx)
+                }
+                val idx = pl.videos.indexOfFirst { PlaylistLinks.videoId(it.url) == link.videoId }
+                if (idx < 0 || gen != playGen) return@launch
+                queue.start(pl.videos.map { it.toQ() }, idx, false, pl.name.ifBlank { null })   // চালানো ভিডিও আবার শুরু হয় না
+            } catch (e: CancellationException) { throw e
+            } catch (e: Exception) { /* প্লেলিস্ট না এলে ভিডিও একাই চলতে থাকে */ }
+        }
+    }
+
 
     /** #হ্যাশট্যাগ ট্যাপ: সব ওভারলে/প্লেয়ার সরিয়ে "#ট্যাগ" সার্চ */
     fun searchTag(tag: String) {
@@ -905,7 +1062,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         addBlock("vid:${v.url}")
         viewModelScope.launch { Recommender.boost(dao, v.title, v.channel, -1.5) }
     }
-    fun blockChannel(name: String) { if (name.isNotBlank()) addBlock("ch:${name.lowercase()}") }
+    fun blockChannel(name: String) { if (name.isNotBlank()) addBlock(ChannelSearch.blockKey(name)) }
     fun blockKeyword(k: String) { val t = k.trim().lowercase(); if (t.length >= 2) addBlock("kw:$t") }
     fun removeBlock(entry: String) = viewModelScope.launch { dao.removeBlock(entry) }
 
@@ -1082,6 +1239,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun resetProfile() = viewModelScope.launch { dao.clearInterests(); topInterests = emptyList(); toast(L.t("প্রোফাইল রিসেট হয়েছে")) }
     fun clearHistory() = viewModelScope.launch { dao.clearHistory(); toast(L.t("ইতিহাস মুছে গেছে")) }
 
+    // ---------- শুধু রিকমেন্ডেশন প্রোফাইল এক্সপোর্ট / ইম্পোর্ট ----------
+    fun exportInterests(uri: Uri) = viewModelScope.launch {
+        try {
+            val json = ProfileBackup.interestsToJson(dao.interests())
+            withContext(Dispatchers.IO) {
+                ctx.contentResolver.openOutputStream(uri, "wt")!!.bufferedWriter().use { it.write(json.toString(2)) }
+            }
+            toast(L.t("রিকমেন্ডেশন প্রোফাইল এক্সপোর্ট হয়েছে"))
+        } catch (e: Exception) { toast(L.f("এক্সপোর্ট ব্যর্থ: {0}", e.message)) }
+    }
+
+    fun importInterests(uri: Uri) = viewModelScope.launch {
+        try {
+            val text = withContext(Dispatchers.IO) {
+                ctx.contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() }
+            }
+            val list = ProfileBackup.interestsFromJson(JSONObject(text))
+            if (list == null) { toast(L.t("এটি TubeX-এর প্রোফাইল ফাইল নয়")); return@launch }
+            dao.upsertInterests(list)
+            loadInterests()
+            toast(L.t("রিকমেন্ডেশন প্রোফাইল ইম্পোর্ট হয়েছে"))
+        } catch (e: Exception) { toast(L.f("ইম্পোর্ট ব্যর্থ: {0}", e.message)) }
+    }
+
     // ---------- ফেভারিট ও প্লেলিস্ট ----------
     fun toggleFavorite() {
         val info = current ?: return
@@ -1191,7 +1372,7 @@ try {
     fun playPlaylistFrom(index: Int, shuffleStart: Boolean = false) {
         val pl = playlistCtl.data ?: return
         if (pl.videos.isEmpty()) return
-        playQueueItems(pl.videos.map { it.toQ() }, index, shuffleStart)
+        playQueueItems(pl.videos.map { it.toQ() }, index, shuffleStart, pl.name.ifBlank { null })
         val queued = queue.items
         if (pl.next != null) viewModelScope.launch {
             val all = playlistCtl.loadAll()

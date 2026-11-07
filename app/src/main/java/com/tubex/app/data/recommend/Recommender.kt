@@ -117,13 +117,47 @@ object Recommender {
             .filter { it.second > 0.3 }.sortedByDescending { it.second }.take(n)
     }
 
+    // ---------- বৈচিত্র্য ----------
+    /** ফিডে [count] বার দেখানো ভিডিওর জরিমানা (সর্বোচ্চ ২.৫) */
+    fun impressionPenalty(count: Int): Double = minOf(2.5, 0.9 * count.coerceAtLeast(0))
+
+    /** "3 hours ago" / "২ দিন আগে" ধরনের লেখা থেকে নতুনত্বের বোনাস; বোঝা না গেলে ০ */
+    fun recencyBonus(uploaded: String?): Double {
+        val s = uploaded?.lowercase() ?: return 0.0
+        val n = Regex("\\d+").find(s)?.value?.toIntOrNull() ?: 1
+        return when {
+            "year" in s || "বছর" in s -> -0.3
+            "month" in s || "মাস" in s -> 0.0
+            "week" in s || "সপ্তাহ" in s -> 0.1
+            "day" in s || "দিন" in s -> if (n <= 3) 0.4 else 0.25
+            "hour" in s || "minute" in s || "ঘণ্টা" in s || "মিনিট" in s -> 0.5
+            else -> 0.0
+        }
+    }
+
+    /**
+     * ওজন ধরে র‍্যান্ডম বাছাই (পুনরাবৃত্তি ছাড়া): বেশি স্কোরের বিষয় বেশি আসে, কিন্তু প্রতিবার একই ৩টি নয়।
+     */
+    fun pickTopics(weights: List<Pair<String, Double>>, n: Int, rnd: Random = Random.Default): List<String> {
+        val pool = weights.filter { it.second > 0.0 }.toMutableList()
+        val out = ArrayList<String>()
+        while (out.size < n && pool.isNotEmpty()) {
+            var r = rnd.nextDouble() * pool.sumOf { it.second }
+            var idx = pool.indexOfFirst { r -= it.second; r <= 0.0 }
+            if (idx < 0) idx = pool.lastIndex
+            out += pool.removeAt(idx).first
+        }
+        return out
+    }
+
     // ---------- র‍্যাংকিং ----------
     private data class Scored(val v: VideoItem, val score: Double, val reason: String)
 
     fun rank(
         videos: List<VideoItem>, interests: List<InterestEntity>, seen: Set<String>,
         recent: List<HistoryEntity>, subscribed: Set<String>,
-        related: Set<String> = emptySet()
+        related: Set<String> = emptySet(),
+        shown: Map<String, Int> = emptyMap()
     ): List<VideoItem> {
         val now = System.currentTimeMillis()
         val b = bucket()
@@ -182,7 +216,10 @@ object Recommender {
             if (letters > 10 && v.title.count { it.isUpperCase() } > letters * 0.6) total -= 0.5
             if (v.title.count { it == '!' } >= 3) total -= 0.4
 
-            total += Random.nextDouble() * 0.5     // একটু এলোমেলো = নতুন কিছুর সুযোগ
+            // আগে ফিডে দেখানো হয়েছে কিন্তু খোলা হয়নি: প্রতিবার একটু করে নিচে নামে, যাতে রিফ্রেশে নতুন ভিডিও ওঠে
+            total -= impressionPenalty(shown[v.url] ?: 0)
+            total += recencyBonus(v.uploaded)
+            total += Random.nextDouble() * 0.9     // এলোমেলো = নতুন কিছুর সুযোগ
             val reason = when {
                 bestLabel.isNotEmpty() && bestVal > 0.3 -> bestLabel
                 total < 0.3 -> L.t("এক্সপ্লোর: আপনার জন্য নতুন কিছু")

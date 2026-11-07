@@ -108,6 +108,11 @@ class Prefs(ctx: Context) {
         }
         set(v) { sp.edit().putString("seenVideosOrdered", v.joinToString("\n")).remove("seenVideos").apply() }
 
+    /** হোম ফিডে দেখানো ভিডিওর তালিকা (পুরনো আগে, সর্বোচ্চ ৩০০): না খুললেও পরের রিফ্রেশে নিচে নামানোর জন্য */
+    var shownVideos: List<String>
+        get() = sp.getString("shownVideos", null)?.split("\n")?.filter { it.isNotBlank() } ?: emptyList()
+        set(v) { sp.edit().putString("shownVideos", v.joinToString("\n")).apply() }
+
     var baselined: Set<String>
         get() = sp.getStringSet("baselined", emptySet())?.toSet() ?: emptySet()
         set(v) { sp.edit().putStringSet("baselined", v).apply() }

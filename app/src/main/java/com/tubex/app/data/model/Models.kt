@@ -41,3 +41,9 @@ data class CommentItem(
 )
 
 data class CommentPage(val items: List<CommentItem>, val next: Page?, val total: Int = -1)
+
+/** সার্চ ফলাফলে দেখানো চ্যানেল */
+data class ChannelResult(
+    val url: String, val name: String, val avatar: String?,
+    val subscribers: Long, val description: String?
+)

@@ -12,6 +12,8 @@ class PlayQueue {
     var items by mutableStateOf<List<QItem>>(emptyList()); private set
     var index by mutableStateOf(0); private set
     var shuffle by mutableStateOf(false); private set
+    /** কিউ কোনো প্লেলিস্ট থেকে এলে তার নাম (অফিসিয়াল YouTube-এর "Playlist: …" প্যানেলের মতো), নইলে null */
+    var title by mutableStateOf<String?>(null); private set
     /** 0 বন্ধ, 1 কিউ, 2 একটি ভিডিও */
     var repeat by mutableStateOf(0); private set
     private val played = HashSet<String>()
@@ -19,14 +21,14 @@ class PlayQueue {
     val isEmpty get() = items.isEmpty()
 
     /** নতুন কিউ বসিয়ে প্রথম চালানোর আইটেম ফেরত দেয় */
-    fun start(list: List<QItem>, startIndex: Int, shuffleStart: Boolean = false): QItem {
-        items = list; played.clear()
+    fun start(list: List<QItem>, startIndex: Int, shuffleStart: Boolean = false, title: String? = null): QItem {
+        items = list; played.clear(); this.title = title
         if (shuffleStart) { shuffle = true; index = list.indices.random() }
         else index = startIndex.coerceIn(0, list.lastIndex)
         return list[index]
     }
 
-    fun clear() { items = emptyList(); index = 0; played.clear() }
+    fun clear() { items = emptyList(); index = 0; played.clear(); title = null }
 
     // @JvmName: `private set` সেটারের সাথে JVM সিগনেচার সংঘর্ষ এড়াতে (Kotlin থেকে নাম একই থাকে)
     @JvmName("applyShuffle") fun setShuffle(v: Boolean) { shuffle = v; played.clear() }

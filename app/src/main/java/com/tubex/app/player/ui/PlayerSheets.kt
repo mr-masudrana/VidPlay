@@ -244,7 +244,11 @@ internal fun captionStyle(color: Int, bg: Int): CaptionStyleCompat {
 @Composable
 internal fun QueueSheet(vm: MainViewModel, onDismiss: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Chip) {
-        Text(L.t("কিউ"), fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.padding(16.dp, 0.dp, 16.dp, 4.dp))
+        Text(
+            vm.queueTitle?.let { L.f("প্লেলিস্ট: {0}", it) } ?: L.t("কিউ"),
+            fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(16.dp, 0.dp, 16.dp, 4.dp)
+        )
         OptionRow(L.t("রিপিট"), listOf(0, 1, 2), vm.repeat, { listOf(L.t("বন্ধ"), L.t("কিউ"), L.t("একটি ভিডিও"))[it] }) { vm.chooseRepeat(it) }
         ToggleRow(L.t("শাফল"), L.t("কিউ থেকে এলোমেলো ভিডিও চলবে"), vm.shuffle) { vm.toggleShuffle(it) }
         if (vm.queueItems.isEmpty()) Text(

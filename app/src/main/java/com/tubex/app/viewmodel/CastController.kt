@@ -81,13 +81,16 @@ class CastController(
     fun load(info: StreamInfo, posMs: Long) {
         val client = client() ?: return
         val stream = YtRepository.castStream(info)
-        if (stream == null) { toast(L.t("এই ভিডিও কাস্ট করা যাবে না")); return }
+        // muxed স্ট্রিম না থাকলে HLS দিয়ে কাস্ট
+        val castUrl = stream?.content ?: info.hlsUrl.takeIf { it.isNotBlank() }
+        if (castUrl == null) { toast(L.t("এই ভিডিও কাস্ট করা যাবে না")); return }
+        val castMime = if (stream != null) (stream.format?.mimeType ?: "video/mp4") else "application/x-mpegURL"
         val meta = MediaMetadata(MediaMetadata.MEDIA_TYPE_MOVIE)
         meta.putString(MediaMetadata.KEY_TITLE, info.name)
         info.thumbnails.lastOrNull()?.url?.let { meta.addImage(WebImage(Uri.parse(it))) }
-        val mi = MediaInfo.Builder(stream.content)
+        val mi = MediaInfo.Builder(castUrl)
             .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
-            .setContentType(stream.format?.mimeType ?: "video/mp4")
+            .setContentType(castMime)
             .setMetadata(meta).build()
         client.load(
             MediaLoadRequestData.Builder().setMediaInfo(mi).setAutoplay(true).setCurrentTime(posMs).build()

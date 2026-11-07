@@ -1,11 +1,13 @@
 package com.tubex.app.data.remote
 
 import com.tubex.app.data.model.ChannelData
+import com.tubex.app.data.model.ChannelResult
 import com.tubex.app.data.model.CommentItem
 import com.tubex.app.data.model.CommentPage
 import com.tubex.app.data.model.PlaylistData
 import com.tubex.app.data.model.PlaylistEntry
 import com.tubex.app.data.model.VideoItem
+import com.tubex.app.data.search.ChannelSearch
 import com.tubex.app.util.L
 import com.tubex.app.util.TextUtil
 
@@ -35,6 +37,7 @@ import org.schabi.newpipe.extractor.Page
 import org.schabi.newpipe.extractor.comments.CommentsInfoItem
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.channel.ChannelInfo
+import org.schabi.newpipe.extractor.channel.ChannelInfoItem
 import org.schabi.newpipe.extractor.channel.tabs.ChannelTabInfo
 import org.schabi.newpipe.extractor.channel.tabs.ChannelTabs
 import org.schabi.newpipe.extractor.comments.CommentsInfo
@@ -65,6 +68,20 @@ object YtRepository {
     suspend fun search(query: String): List<VideoItem> = withContext(Dispatchers.IO) {
         val handler = yt.searchQHFactory.fromQuery(query, listOf("videos"), "")
         SearchInfo.getInfo(yt, handler).relatedItems.filterIsInstance<StreamInfoItem>().map { it.toVideo() }
+    }
+
+    /** সার্চে চ্যানেলের ফলাফল (নাম লিখে খুঁজলে চ্যানেল নিজেও যেন আসে); সর্বোচ্চ [limit]টি */
+    suspend fun searchChannels(query: String, limit: Int = ChannelSearch.DEFAULT_LIMIT): List<ChannelResult> = withContext(Dispatchers.IO) {
+        val handler = yt.searchQHFactory.fromQuery(query, listOf("channels"), "")
+        SearchInfo.getInfo(yt, handler).relatedItems.filterIsInstance<ChannelInfoItem>().take(limit).map {
+            ChannelSearch.toResult(it.url, it.name, it.thumbnails.map { t -> t.url }, it.subscriberCount, it.description)
+        }
+    }
+
+    /** সার্চে প্লেলিস্টের ফলাফল (হোমের প্লেলিস্ট সারির জন্য); সর্বোচ্চ [limit]টি */
+    suspend fun searchPlaylists(query: String, limit: Int = 6): List<PlaylistEntry> = withContext(Dispatchers.IO) {
+        val handler = yt.searchQHFactory.fromQuery(query, listOf("playlists"), "")
+        SearchInfo.getInfo(yt, handler).relatedItems.filterIsInstance<PlaylistInfoItem>().take(limit).map { it.toEntry() }
     }
 
     suspend fun streamInfo(url: String): StreamInfo = withContext(Dispatchers.IO) { StreamInfo.getInfo(yt, url) }

@@ -96,12 +96,12 @@ private fun PlaylistDetail(vm: MainViewModel, p: PlaylistRow, onBack: () -> Unit
             IconButton(onClick = { renameOpen = true }) { Icon(Icons.Filled.Edit, null) }
             Button(
                 enabled = entries.isNotEmpty(),
-                onClick = { vm.playQueueItems(entries.map { QItem(it.url, it.title, it.channel, it.thumb) }, 0) },
+                onClick = { vm.playQueueItems(entries.map { QItem(it.url, it.title, it.channel, it.thumb) }, 0, title = name) },
                 modifier = Modifier.padding(end = 12.dp)
             ) { Text(L.t("সব চালান")) }
             TextButton(
                 enabled = entries.isNotEmpty(),
-                onClick = { vm.playQueueItems(entries.map { QItem(it.url, it.title, it.channel, it.thumb) }, 0, shuffleStart = true) }
+                onClick = { vm.playQueueItems(entries.map { QItem(it.url, it.title, it.channel, it.thumb) }, 0, shuffleStart = true, title = name) }
             ) { Text(L.t("শাফল")) }
         }
         if (entries.isEmpty()) Box(Modifier.fillMaxWidth().padding(32.dp), Alignment.Center) {
@@ -112,7 +112,7 @@ private fun PlaylistDetail(vm: MainViewModel, p: PlaylistRow, onBack: () -> Unit
                 val e = entries[i]
                 MediaRow(
                     e.title, e.channel, e.thumb,
-                    onClick = { vm.playQueueItems(entries.map { QItem(it.url, it.title, it.channel, it.thumb) }, i) },
+                    onClick = { vm.playQueueItems(entries.map { QItem(it.url, it.title, it.channel, it.thumb) }, i, title = name) },
                     trailing = {
                         Column {
                             IconButton(enabled = i > 0, onClick = { vm.movePlaylistItem(entries, i, i - 1) }, modifier = Modifier.size(32.dp)) {

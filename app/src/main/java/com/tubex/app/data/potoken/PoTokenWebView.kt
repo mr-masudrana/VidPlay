@@ -9,7 +9,6 @@ import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebView
-import org.json.JSONObject
 import org.schabi.newpipe.extractor.NewPipe
 import java.io.Closeable
 import java.util.concurrent.CompletableFuture
@@ -30,7 +29,7 @@ class PoTokenWebView private constructor(context: Context) : Closeable {
     private val main = Handler(Looper.getMainLooper())
     private val webView = WebView(context)
     private val initFuture = CompletableFuture<PoTokenWebView>()
-    private val emitters = mutableListOf<Pair<String, CompletableFuture<String>>>()
+    private val pending = PendingTokens()
 
     @Volatile private var expiresAtMs = 0L
     @Volatile private var closed = false
@@ -54,7 +53,7 @@ class PoTokenWebView private constructor(context: Context) : Closeable {
                     val e = BadWebViewException("\"${m.message()}\", source: ${m.sourceId()} (${m.lineNumber()})")
                     Log.e(TAG, "WebView ভাঙা: ${e.message}")
                     failInit(e)
-                    popAll().forEach { (_, f) -> f.completeExceptionally(e) }
+                    pending.failAll(e)
                 }
                 return super.onConsoleMessage(m)
             }
@@ -67,7 +66,7 @@ class PoTokenWebView private constructor(context: Context) : Closeable {
         webView.loadDataWithBaseURL(
             "https://www.youtube.com",
             // পেজ লোড শেষে downloadAndRunBotguard() ডাকা হয়
-            html.replaceFirst("</script>", "\n$JS_INTERFACE.downloadAndRunBotguard()</script>"),
+            injectAutoStart(html),
             "text/html", "utf-8", null
         )
     }
@@ -75,23 +74,11 @@ class PoTokenWebView private constructor(context: Context) : Closeable {
     /** JS থেকে ডাকা হয় (JavaBridge থ্রেডে) */
     @JavascriptInterface
     fun downloadAndRunBotguard() {
-        post("https://www.youtube.com/api/jnn/v1/Create", "[ \"$REQUEST_KEY\" ]") { body ->
+        post(BOTGUARD_CREATE_URL, createRequestBody()) { body ->
             val data = parseChallengeData(body)
             main.post {
                 if (closed) return@post
-                webView.evaluateJavascript(
-                    """try {
-                        data = $data
-                        runBotGuard(data).then(function (result) {
-                            this.webPoSignalOutput = result.webPoSignalOutput
-                            $JS_INTERFACE.onRunBotguardResult(result.botguardResponse)
-                        }, function (error) {
-                            $JS_INTERFACE.onJsInitializationError(error + "\n" + error.stack)
-                        })
-                    } catch (error) {
-                        $JS_INTERFACE.onJsInitializationError(error + "\n" + error.stack)
-                    }""", null
-                )
+                webView.evaluateJavascript(runBotguardScript(data), null)
             }
         }
     }
@@ -104,10 +91,10 @@ class PoTokenWebView private constructor(context: Context) : Closeable {
 
     @JavascriptInterface
     fun onRunBotguardResult(botguardResponse: String) {
-        post("https://www.youtube.com/api/jnn/v1/GenerateIT", "[ \"$REQUEST_KEY\", \"$botguardResponse\" ]") { body ->
+        post(BOTGUARD_GENERATE_IT_URL, generateItRequestBody(botguardResponse)) { body ->
             val (integrityToken, ttlSec) = parseIntegrityTokenData(body)
             // ১০ মিনিট মার্জিন রেখে মেয়াদ ধরা হয়
-            expiresAtMs = System.currentTimeMillis() + (ttlSec - 600) * 1000
+            expiresAtMs = integrityExpiryMs(System.currentTimeMillis(), ttlSec)
             main.post {
                 if (closed) return@post
                 webView.evaluateJavascript("this.integrityToken = $integrityToken") {
@@ -123,22 +110,8 @@ class PoTokenWebView private constructor(context: Context) : Closeable {
         val future = CompletableFuture<String>()
         main.post {
             if (closed) { future.completeExceptionally(PoTokenException("closed")); return@post }
-            synchronized(emitters) { emitters.add(identifier to future) }
-            webView.evaluateJavascript(
-                """try {
-                    identifier = ${JSONObject.quote(identifier)}
-                    u8Identifier = ${stringToU8(identifier)}
-                    poTokenU8 = obtainPoToken(webPoSignalOutput, integrityToken, u8Identifier)
-                    poTokenU8String = ""
-                    for (i = 0; i < poTokenU8.length; i++) {
-                        if (i != 0) poTokenU8String += ","
-                        poTokenU8String += poTokenU8[i]
-                    }
-                    $JS_INTERFACE.onObtainPoTokenResult(identifier, poTokenU8String)
-                } catch (error) {
-                    $JS_INTERFACE.onObtainPoTokenError(identifier, error + "\n" + error.stack)
-                }""", null
-            )
+            pending.add(identifier, future)
+            webView.evaluateJavascript(mintScript(identifier), null)
         }
         return await(future, TOKEN_TIMEOUT_SEC)
     }
@@ -146,26 +119,15 @@ class PoTokenWebView private constructor(context: Context) : Closeable {
     @JavascriptInterface
     fun onObtainPoTokenError(identifier: String, error: String) {
         Log.e(TAG, "poToken ত্রুটি: $error")
-        pop(identifier)?.completeExceptionally(buildExceptionForJsError(error))
+        pending.deliverError(identifier, error)
     }
 
     @JavascriptInterface
     fun onObtainPoTokenResult(identifier: String, poTokenU8: String) {
-        val token = try { u8ToBase64(poTokenU8) } catch (t: Throwable) {
-            pop(identifier)?.completeExceptionally(t); return
-        }
-        pop(identifier)?.complete(token)
+        pending.deliverResult(identifier, poTokenU8)
     }
 
     // ---------- সহায়ক ----------
-    private fun pop(identifier: String): CompletableFuture<String>? = synchronized(emitters) {
-        emitters.indexOfFirst { it.first == identifier }.takeIf { it >= 0 }?.let { emitters.removeAt(it).second }
-    }
-
-    private fun popAll(): List<Pair<String, CompletableFuture<String>>> = synchronized(emitters) {
-        emitters.toList().also { emitters.clear() }
-    }
-
     /** নেটওয়ার্ক অনুরোধ ব্যাকগ্রাউন্ডে; ব্যর্থ হলে ইনিশিয়ালাইজেশন বাতিল */
     private fun post(url: String, data: String, onBody: (String) -> Unit) {
         io.execute {
@@ -197,7 +159,7 @@ class PoTokenWebView private constructor(context: Context) : Closeable {
     override fun close() {
         if (closed) return
         closed = true
-        popAll().forEach { (_, f) -> f.completeExceptionally(PoTokenException("closed")) }
+        pending.failAll(PoTokenException("closed"))
         runCatching {
             webView.clearHistory()
             webView.loadUrl("about:blank")
@@ -211,10 +173,9 @@ class PoTokenWebView private constructor(context: Context) : Closeable {
         private const val TAG = "PoTokenWebView"
         // BotGuard-এর সার্বজনীন API key ও request key (YouTube ওয়েবের অনুরোধ থেকে নেওয়া)
         private const val GOOGLE_API_KEY = "AIzaSyDyT5W0Jh49F30Pqqtyfdf7pDLFKLJoAnw"
-        private const val REQUEST_KEY = "O43z0dpjhgX20SCx4KAo"
         private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.3"
-        private const val JS_INTERFACE = "PoTokenWebView"
+        private const val JS_INTERFACE = JS_BRIDGE
         private const val INIT_TIMEOUT_SEC = 40L
         private const val TOKEN_TIMEOUT_SEC = 20L
 

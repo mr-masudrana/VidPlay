@@ -58,6 +58,12 @@ internal fun SettingsPage(vm: MainViewModel, page: Int) {
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importProfile(uri)
     }
+    val interestExporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) vm.exportInterests(uri)
+    }
+    val interestImporter = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.importInterests(uri)
+    }
     LaunchedEffect(Unit) { vm.loadInterests() }
     val blocks by vm.blocks.collectAsState()
     var kw by remember { mutableStateOf("") }
@@ -336,6 +342,12 @@ internal fun SettingsPage(vm: MainViewModel, page: Int) {
             }
             OutlinedButton(onClick = { vm.resetProfile() }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 Text(L.t("রিকমেন্ডেশন প্রোফাইল রিসেট"))
+            }
+            OutlinedButton(onClick = { interestExporter.launch("tubex-recommendations.json") }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                Text(L.t("শুধু রিকমেন্ডেশন এক্সপোর্ট"))
+            }
+            OutlinedButton(onClick = { interestImporter.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                Text(L.t("শুধু রিকমেন্ডেশন ইম্পোর্ট"))
             }
             OutlinedButton(onClick = { exporter.launch("tubex-profile.json") }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 Text(L.t("প্রোফাইল এক্সপোর্ট (সাবস্ক্রিপশন, প্লেলিস্ট, ইতিহাস, রিকমেন্ডেশন)"))

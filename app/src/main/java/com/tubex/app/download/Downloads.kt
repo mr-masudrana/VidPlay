@@ -5,6 +5,8 @@ import com.tubex.app.data.local.entity.DownloadEntity
 import com.tubex.app.util.L
 
 import android.content.Context
+import android.media.MediaCodecList
+import android.os.Build
 import android.os.Environment
 import org.schabi.newpipe.extractor.MediaFormat
 import org.schabi.newpipe.extractor.stream.StreamInfo
@@ -13,10 +15,20 @@ import java.io.File
 data class DlOption(
     val label: String, val note: String,
     val height: Int, val videoItag: Int, val audioItag: Int, val audioOnly: Boolean,
-    val webm: Boolean = false
+    val webm: Boolean = false,
+    val av1: Boolean = false
 )
 
 object Downloads {
+
+    /** MediaMuxer-এ MP4-তে AV1 লেখা (Android 14+) ও ডিভাইসে AV1 ডিকোডার — দুটোই থাকলে তবেই AV1 অপশন দেখাই */
+    val av1Supported: Boolean by lazy {
+        Build.VERSION.SDK_INT >= 34 && runCatching {
+            MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.any { ci ->
+                !ci.isEncoder && ci.supportedTypes.any { it.equals("video/av01", ignoreCase = true) }
+            }
+        }.getOrDefault(false)
+    }
 
     /** ডাউনলোডের অপশন: H.264 ভিডিও + M4A অডিও (মার্জ), সরাসরি muxed, শুধু অডিও */
     fun options(info: StreamInfo): List<DlOption> {
@@ -48,6 +60,16 @@ object Downloads {
         info.videoStreams.sortedByDescending { it.height }.forEach { v ->
             if (out.none { it.height == v.height }) out += DlOption("${v.height}p", L.t("সরাসরি (মার্জ ছাড়া)"), v.height, v.itag, 0, false)
         }
+        // AV1 (MP4 কন্টেইনার) + M4A: একই মানে H.264-এর চেয়ে ছোট ফাইল; ডিভাইস সাপোর্ট না করলে অপশনই আসে না
+        if (audio != null && av1Supported) {
+            info.videoOnlyStreams
+                .filter { it.format == MediaFormat.MPEG_4 && it.codec?.startsWith("av01") == true }
+                .groupBy { it.height }
+                .map { (h, list) -> h to list.first() }
+                .forEach { (h, v) ->
+                    out += DlOption("${h}p AV1", L.t("MP4 • AV1 • ছোট ফাইল, মার্জ"), h, v.itag, audio.itag, false, av1 = true)
+                }
+        }
         (audio ?: info.audioStreams.maxByOrNull { it.averageBitrate })?.let {
             out += DlOption(L.t("শুধু অডিও"), "m4a", 0, 0, it.itag, true)
         }
@@ -58,7 +80,7 @@ object Downloads {
         val dir = ctx.getExternalFilesDir(Environment.DIRECTORY_MOVIES)
             ?: File(ctx.filesDir, "downloads").also { it.mkdirs() }
         val safe = info.name.replace(Regex("[^\\p{L}\\p{N} _-]"), "").trim().take(50).ifBlank { "video" }
-        val tag = if (o.audioOnly) "audio" else "${o.height}p"
+        val tag = if (o.audioOnly) "audio" else "${o.height}p" + (if (o.av1) "_av1" else "")
         val ext = if (o.audioOnly) "m4a" else if (o.webm) "webm" else "mp4"
         val path = File(dir, "${safe}_${info.id}_$tag.$ext").absolutePath
 

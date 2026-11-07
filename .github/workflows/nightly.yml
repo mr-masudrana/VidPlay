@@ -1,0 +1,66 @@
+name: Nightly APK
+
+# main-এ প্রতিটি push-এ নাইটলি APK বানিয়ে "nightly" প্রি-রিলিজে আপলোড করে।
+# আলাদা অ্যাপ (com.tubex.app.nightly) হিসেবে ইনস্টল হয়, তাই স্টেবল অ্যাপের ডেটা ছোঁয়ে না।
+# KEYSTORE_BASE64 সিক্রেট থাকলে সাইনড রিলিজ APK, না থাকলে ডিবাগ APK বানায়।
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    env:
+      NIGHTLY: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Unit tests
+        run: gradle testDebugUnitTest --stacktrace
+
+      - name: Build APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            export KEYSTORE_PATH="$RUNNER_TEMP/release.jks"
+            gradle assembleRelease --stacktrace
+            cp app/build/outputs/apk/release/*.apk tubex-nightly.apk
+          else
+            gradle assembleDebug --stacktrace
+            cp app/build/outputs/apk/debug/*.apk tubex-nightly.apk
+          fi
+
+      - name: Move nightly tag
+        run: |
+          git tag -f nightly
+          git push -f origin nightly
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: TubeX Nightly
+          prerelease: true
+          body: "প্রতিটি commit-এর স্বয়ংক্রিয় নাইটলি বিল্ড — অস্থির হতে পারে। (${{ github.sha }})"
+          files: tubex-nightly.apk

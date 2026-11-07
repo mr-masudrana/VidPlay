@@ -40,6 +40,7 @@ private val EN: Map<String, String> = mapOf(
     "ডাউনলোড" to "Download",
     "ভিডিও + অডিও মার্জ" to "Video + audio merged",
     "WebM • ভিডিও + অডিও মার্জ" to "WebM • video + audio merged",
+    "MP4 • AV1 • ছোট ফাইল, মার্জ" to "MP4 • AV1 • smaller file, merged",
     "সরাসরি (মার্জ ছাড়া)" to "Direct (no merge)",
     "শুধু অডিও" to "Audio only",
     "এটি আগে থেকেই ডাউনলোড তালিকায় আছে" to "This is already in the download list",
@@ -388,4 +389,10 @@ private val EN: Map<String, String> = mapOf(
     "সবচেয়ে বেশি দেখা" to "Most viewed",
     "ফিল্টারে কোনো ভিডিও মেলেনি" to "No videos match the filters",
     "{0} টি ফলাফল" to "{0} results",
+    "প্লেলিস্ট: {0}" to "Playlist: {0}",
+    "আপনার জন্য প্লেলিস্ট" to "Playlists for you",
+    "শুধু রিকমেন্ডেশন এক্সপোর্ট" to "Export recommendations only",
+    "শুধু রিকমেন্ডেশন ইম্পোর্ট" to "Import recommendations only",
+    "রিকমেন্ডেশন প্রোফাইল এক্সপোর্ট হয়েছে" to "Recommendation profile exported",
+    "রিকমেন্ডেশন প্রোফাইল ইম্পোর্ট হয়েছে" to "Recommendation profile imported",
 )
