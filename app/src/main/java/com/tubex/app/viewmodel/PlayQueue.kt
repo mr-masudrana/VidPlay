@@ -28,8 +28,9 @@ class PlayQueue {
 
     fun clear() { items = emptyList(); index = 0; played.clear() }
 
-    fun setShuffle(v: Boolean) { shuffle = v; played.clear() }
-    fun setRepeat(mode: Int) { repeat = mode }
+    // @JvmName: `private set` সেটারের সাথে JVM সিগনেচার সংঘর্ষ এড়াতে (Kotlin থেকে নাম একই থাকে)
+    @JvmName("applyShuffle") fun setShuffle(v: Boolean) { shuffle = v; played.clear() }
+    @JvmName("applyRepeat") fun setRepeat(mode: Int) { repeat = mode }
 
     /** ভিডিও শেষে পরের আইটেম (শাফল/রিপিট মেনে); না থাকলে null। পজিশন নিজে এগোয়। */
     fun advance(): QItem? {
