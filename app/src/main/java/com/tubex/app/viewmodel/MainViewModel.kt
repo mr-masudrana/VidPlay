@@ -2,7 +2,9 @@ package com.tubex.app.viewmodel
 
 import com.tubex.app.data.backup.NewPipeImport
 import com.tubex.app.data.backup.ProfileBackup
+import com.tubex.app.data.cache.FeedCache
 import com.tubex.app.data.cache.SubsCache
+import com.tubex.app.data.cache.StreamInfoCache
 import com.tubex.app.data.local.AppDb
 import com.tubex.app.data.local.Prefs
 import com.tubex.app.data.local.entity.BlockEntity
@@ -153,16 +155,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var chipIndex by mutableStateOf(0); private set
     private var chipQuery: String? = null
     /** ক্যাটাগরি/আপনার-জন্য ফিডের ক্যাশ: একই ফিডে ফিরলে আবার লোড হয় না (পুল-টু-রিফ্রেশে নতুন হয়) */
-    private val feedCache = HashMap<String, Pair<Long, List<VideoItem>>>()
-    private val feedTtlMs = 10 * 60_000L
-    private fun cachedFeed(key: String): List<VideoItem>? =
-        feedCache[key]?.takeIf { System.currentTimeMillis() - it.first < feedTtlMs && it.second.isNotEmpty() }?.second
-    private fun putFeed(key: String, list: List<VideoItem>) {
-        if (list.isNotEmpty()) feedCache[key] = System.currentTimeMillis() to list
-    }
+    private val feedCache = FeedCache()
+    private fun cachedFeed(key: String): List<VideoItem>? = feedCache.get(key)
+    private fun putFeed(key: String, list: List<VideoItem>) = feedCache.put(key, list)
     /** ব্যাক জেসচারের প্রিভিউর জন্য: বর্তমান ক্যাটাগরির হোম ফিড (ক্যাশ থেকে) */
     fun previewFeed(): List<VideoItem> =
-        feedCache[if (chipIndex == 0) "foryou" else "cat:${chipQuery.orEmpty()}"]?.second
+        feedCache.peek(if (chipIndex == 0) "foryou" else "cat:${chipQuery.orEmpty()}")
             ?: if (!isSearchResult) feed else emptyList()
     fun pickCategory(i: Int, name: String) {
         chipIndex = i; chipQuery = if (i == 0) null else name
@@ -261,11 +259,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private var segments: List<Segment> = emptyList()
     private var milestone = 0
-    var queueItems by mutableStateOf<List<QItem>>(emptyList()); private set
-    var queueIndex by mutableStateOf(0); private set
-    var shuffle by mutableStateOf(false); private set
-    var repeat by mutableStateOf(0); private set          // 0 বন্ধ, 1 কিউ, 2 একটি ভিডিও
-    private val playedInQueue = HashSet<String>()
+    private val queue = PlayQueue()
+    val queueItems get() = queue.items
+    val queueIndex get() = queue.index
+    val shuffle get() = queue.shuffle
+    val repeat get() = queue.repeat          // 0 বন্ধ, 1 কিউ, 2 একটি ভিডিও
+    private val streamCache = StreamInfoCache(viewModelScope)
 
     val active get() = current != null || local != null
     val title get() = current?.name ?: local?.title ?: ""
@@ -309,11 +308,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (info != null && recoveredUrl != info.url) {
                     recoveredUrl = info.url
                     val pos = player.currentPosition
-                    infoCache.remove(info.url)
+                    streamCache.remove(info.url)
                     viewModelScope.launch {
                         try {
                             val fresh = YtRepository.streamInfo(info.url)
-                            infoCache[info.url] = System.currentTimeMillis() to fresh
+                            streamCache.put(info.url, fresh)
                             if (current?.url != info.url) return@launch    // এর মধ্যে অন্য ভিডিওতে গেছে
                             current = fresh
                             rebuild(fresh, pos); player.playWhenReady = true
@@ -573,31 +572,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun playQueueItems(items: List<QItem>, index: Int, shuffleStart: Boolean = false) {
         if (items.isEmpty()) return
-        queueItems = items; playedInQueue.clear()
-        if (shuffleStart) { shuffle = true; queueIndex = items.indices.random() }
-        else queueIndex = index.coerceIn(0, items.lastIndex)
-        startPlay(items[queueIndex].url)
+        startPlay(queue.start(items, index, shuffleStart).url)
     }
 
-    private fun clearQueue() { queueItems = emptyList(); queueIndex = 0; playedInQueue.clear() }
+    private fun clearQueue() = queue.clear()
 
     /** ভিডিও শেষে: শাফল/রিপিট অনুযায়ী কিউর পরের আইটেম */
     private fun advanceQueue(): Boolean {
-        if (queueItems.isEmpty()) return false
-        val n = queueItems.size
-        queueItems.getOrNull(queueIndex)?.let { playedInQueue.add(it.url) }
-        val next: Int = if (shuffle) {
-            val remaining = queueItems.indices.filter { queueItems[it].url !in playedInQueue && it != queueIndex }
-            if (remaining.isNotEmpty()) remaining.random()
-            else if (repeat == 1) {
-                playedInQueue.clear()
-                queueItems.indices.filter { it != queueIndex }.randomOrNull() ?: queueIndex
-            } else -1
-        } else if (queueIndex + 1 < n) queueIndex + 1
-        else if (repeat == 1) 0
-        else -1
-        if (next >= 0) { queueIndex = next; startPlay(queueItems[next].url, expand = false); return true }
-        return false
+        val next = queue.advance() ?: return false
+        startPlay(next.url, expand = false)
+        return true
     }
 
     // ---------- পরের / আগের ভিডিও, অটোপ্লে ----------
@@ -621,9 +605,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** ৩ সেকেন্ডের বেশি চলে থাকলে শুরু থেকে; নইলে আগের ভিডিও (কিউ বা দেখার ইতিহাস থেকে) */
     fun playPreviousVideo() {
         if (player.currentPosition > 3_000 || !canPrev()) { player.seekTo(0); return }
-        if (queueItems.isNotEmpty() && queueIndex > 0) {
-            queueIndex -= 1; startPlay(queueItems[queueIndex].url, expand = false); return
-        }
+        queue.back()?.let { startPlay(it.url, expand = false); return }
         val prev = backStack.removeLastOrNull() ?: run { player.seekTo(0); return }
         goingBack = true
         startPlay(prev, expand = false)
@@ -633,66 +615,33 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun addToQueue(v: VideoItem, playNext: Boolean) {
         val item = QItem(v.url, v.title, v.channel, v.thumb)
         if (!active) { playQueueItems(listOf(item), 0); return }
-        if (queueItems.isEmpty()) {
-            val cur = current
-            queueItems = if (cur != null)
-                listOf(QItem(cur.url, cur.name, cur.uploaderName ?: "", cur.thumbnails.lastOrNull()?.url))
-            else emptyList()
-            queueIndex = 0
-        }
-        val at = if (playNext) (queueIndex + 1).coerceIn(0, queueItems.size) else queueItems.size
-        queueItems = queueItems.toMutableList().also { it.add(at, item) }
+        val seed = current?.let { QItem(it.url, it.name, it.uploaderName ?: "", it.thumbnails.lastOrNull()?.url) }
+        queue.add(item, playNext, seed)
         toast(L.t("কিউতে যোগ হয়েছে"))
     }
 
     fun queuePlayAt(i: Int) {
-        val q = queueItems.getOrNull(i) ?: return
-        queueIndex = i
+        val q = queue.select(i) ?: return
         startPlay(q.url)
     }
 
-    fun queueRemove(i: Int) {
-        if (i !in queueItems.indices) return
-        queueItems = queueItems.toMutableList().also { it.removeAt(i) }
-        if (i <= queueIndex) queueIndex = (queueIndex - 1).coerceAtLeast(0)
-        if (queueItems.isEmpty()) queueIndex = 0
-    }
-
-    fun queueMove(i: Int, delta: Int) {
-        val j = i + delta
-        if (i !in queueItems.indices || j !in queueItems.indices) return
-        val cur = queueItems.getOrNull(queueIndex)?.url
-        queueItems = queueItems.toMutableList().also { val t = it[i]; it[i] = it[j]; it[j] = t }
-        if (cur != null) queueIndex = queueItems.indexOfFirst { it.url == cur }
-    }
-
+    fun queueRemove(i: Int) = queue.remove(i)
+    fun queueMove(i: Int, delta: Int) = queue.move(i, delta)
     fun queueClear() = clearQueue()
-    fun toggleShuffle(v: Boolean) { shuffle = v; playedInQueue.clear() }
+    fun toggleShuffle(v: Boolean) = queue.setShuffle(v)
     fun chooseRepeat(m: Int) {
-        repeat = m; loop = (m == 2)
+        queue.setRepeat(m); loop = (m == 2)
         player.repeatMode = if (m == 2) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
     }
 
     // ---------- দ্রুত লোডের জন্য ক্যাশ ও প্রি-ফেচ ----------
-    private val infoCache = object : LinkedHashMap<String, Pair<Long, StreamInfo>>(16, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<Long, StreamInfo>>?) = size > 8
-    }
-    private val inflight = ConcurrentHashMap<String, Deferred<StreamInfo>>()
     private var playJob: Job? = null
     private var recoveredUrl: String? = null     // যে ভিডিওর জন্য এরর-রিকভারি একবার চলেছে
     private var captionDropped = false
     private var playToken = 0
 
-    /** ক্যাশে (৩০ মিনিট) থাকলে সাথে সাথে; আগে থেকে চলমান প্রি-ফেচ থাকলে তার জন্য অপেক্ষা; নইলে নতুন ফেচ */
-    private suspend fun infoFor(url: String): StreamInfo {
-        infoCache[url]?.takeIf { System.currentTimeMillis() - it.first < 30 * 60_000L }?.let { return it.second }
-        val d = inflight.getOrPut(url) {
-            viewModelScope.async {
-                YtRepository.streamInfo(url).also { infoCache[url] = System.currentTimeMillis() to it }
-            }.also { job -> job.invokeOnCompletion { inflight.remove(url) } }
-        }
-        return d.await()
-    }
+    /** ক্যাশে থাকলে সাথে সাথে; চলমান প্রি-ফেচ থাকলে তার জন্য অপেক্ষা; নইলে নতুন ফেচ (StreamInfoCache) */
+    private suspend fun infoFor(url: String): StreamInfo = streamCache.get(url)
 
     private fun findHint(url: String): VideoItem? = (related + feed + subsFeed).firstOrNull { it.url == url }
 
@@ -1237,10 +1186,10 @@ try {
         val pl = playlistCtl.data ?: return
         if (pl.videos.isEmpty()) return
         playQueueItems(pl.videos.map { it.toQ() }, index, shuffleStart)
-        val queued = queueItems
+        val queued = queue.items
         if (pl.next != null) viewModelScope.launch {
             val all = playlistCtl.loadAll()
-            if (queueItems === queued && all.size > queued.size) queueItems = all.map { it.toQ() }   // এখনো একই কিউ থাকলে বাড়াই
+            if (queue.items === queued && all.size > queued.size) queue.replaceItems(all.map { it.toQ() })   // এখনো একই কিউ থাকলে বাড়াই
         }
     }
 
